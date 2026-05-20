@@ -14,6 +14,20 @@
 //! without recompiling. The GUI declares a minimum NDJSON schema
 //! version it understands; field changes within a 1.x assay are
 //! additive per the assay 1.0 stability promise.
+//!
+//! ## stderr handling
+//!
+//! assay writes diagnostic warnings to stderr (e.g. cache miss
+//! breadcrumbs, ecosystem-skip notices). These are NOT runtime
+//! errors. The previous shape of this file forwarded every stderr
+//! line as a `SpawnFailed` event, which flipped the UI run-status
+//! pill to red on perfectly successful runs. The current shape
+//! BUFFERS stderr in memory and only surfaces it (as an
+//! `AssayStderrBanner` event) when the child exits non-zero AND
+//! no NDJSON `run_started` event was ever observed — i.e. assay
+//! died before it managed to emit any structured progress. That's
+//! the case where the user is otherwise looking at an empty
+//! progress view and has zero diagnostic signal.
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -48,6 +62,21 @@ pub struct StartArgs {
     /// `--member-gate` toggle.
     #[serde(default)]
     pub member_gate: bool,
+    /// Validator executor: `docker` (assay default; sandboxed
+    /// build-script isolation) or `host` (faster, no sandbox).
+    /// Maps to `--executor docker|host`. When `mode == "dry-run"`
+    /// the validator never runs and this field is silently
+    /// ignored by assay.
+    #[serde(default = "default_executor")]
+    pub executor: String,
+    /// Suppress SHA-pin hardening proposals for tag-pinned
+    /// GitHub Actions references. Maps to `--no-sha-pin-proposals`.
+    #[serde(default)]
+    pub no_sha_pin_proposals: bool,
+}
+
+fn default_executor() -> String {
+    "docker".into()
 }
 
 /// Lightweight diagnostic event we emit to the frontend BEFORE the
@@ -56,10 +85,41 @@ pub struct StartArgs {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 enum GuiEvent {
-    Spawning { command: String },
-    SpawnFailed { reason: String },
-    StreamEnded { exit_code: Option<i32> },
-    Raw { line: String },
+    Spawning {
+        command: String,
+    },
+    SpawnFailed {
+        reason: String,
+    },
+    StreamEnded {
+        exit_code: Option<i32>,
+    },
+    Raw {
+        line: String,
+    },
+    /// Aggregated stderr surfaced after the child exits without
+    /// having emitted any NDJSON. The frontend renders this in a
+    /// top-of-page banner instead of leaving the user with a blank
+    /// progress view.
+    StderrBanner {
+        text: String,
+        exit_code: Option<i32>,
+    },
+}
+
+/// Tracks whether assay emitted any NDJSON during the run.
+///
+/// If a child exits non-zero without ever emitting NDJSON (e.g.
+/// `--repo` doesn't exist, clap couldn't parse the args, the
+/// binary itself segfaulted), the UI would otherwise see only
+/// `stream_ended` with an exit code and no rows. The frontend
+/// shows a stderr banner in that case; this flag is what lets us
+/// distinguish "run failed with no output" from "run succeeded
+/// quietly with some harmless stderr breadcrumbs".
+#[derive(Default)]
+struct RunDiagnostics {
+    saw_ndjson: bool,
+    stderr_buf: String,
 }
 
 /// State held inside the Tauri app. Right now only used to gate
@@ -132,25 +192,45 @@ async fn start_analysis(
         }
     };
 
+    let diagnostics = Arc::new(Mutex::new(RunDiagnostics::default()));
+
     let stdout = child.stdout.take().expect("stdout was piped");
     let stderr = child.stderr.take().expect("stderr was piped");
     let stdout_app = app.clone();
-    thread::spawn(move || stream_stdout(stdout, stdout_app));
-    let stderr_app = app.clone();
-    thread::spawn(move || stream_stderr(stderr, stderr_app));
+    let stdout_diag = Arc::clone(&diagnostics);
+    thread::spawn(move || stream_stdout(stdout, stdout_app, stdout_diag));
+    let stderr_diag = Arc::clone(&diagnostics);
+    thread::spawn(move || buffer_stderr(stderr, stderr_diag));
 
     let app_for_wait = app.clone();
     // Cheap Arc::clone — the waiter thread now owns its own handle
     // to the `running` lock and the Tauri State storage is not
-    // touched after this point. Replaces an earlier raw-pointer
-    // cast that depended on the Tauri runtime not relocating
-    // managed state, which is an implementation detail we have no
-    // contract on.
+    // touched after this point.
     let running = Arc::clone(&state.inner().running);
+    let wait_diag = Arc::clone(&diagnostics);
     thread::spawn(move || {
         let exit_code = child.wait().ok().and_then(|s| s.code());
         if let Ok(mut guard) = running.lock() {
             *guard = false;
+        }
+        // If the child died before emitting any NDJSON, surface
+        // the buffered stderr in a banner so the UI has something
+        // to show. Otherwise stay quiet — assay writes harmless
+        // breadcrumbs to stderr on normal runs.
+        if exit_code.unwrap_or(0) != 0 {
+            if let Ok(diag) = wait_diag.lock() {
+                if !diag.saw_ndjson && !diag.stderr_buf.is_empty() {
+                    app_for_wait
+                        .emit(
+                            "assay://event",
+                            GuiEvent::StderrBanner {
+                                text: diag.stderr_buf.clone(),
+                                exit_code,
+                            },
+                        )
+                        .ok();
+                }
+            }
         }
         app_for_wait
             .emit("assay://event", GuiEvent::StreamEnded { exit_code })
@@ -179,6 +259,16 @@ fn build_cli_args(args: &StartArgs) -> Vec<String> {
         // dry-run is the default; no flag.
         _ => {}
     }
+    // Executor only meaningful when validator runs; assay
+    // silently ignores it on dry-run anyway, but we omit on
+    // dry-run to keep the command preview minimal.
+    if args.mode != "dry-run" {
+        let exec = args.executor.to_ascii_lowercase();
+        if exec == "host" || exec == "docker" {
+            out.push("--executor".into());
+            out.push(exec);
+        }
+    }
     if let Some(t) = args.threads {
         out.push("--threads".into());
         out.push(t.to_string());
@@ -189,6 +279,9 @@ fn build_cli_args(args: &StartArgs) -> Vec<String> {
     if args.member_gate {
         out.push("--member-gate".into());
     }
+    if args.no_sha_pin_proposals {
+        out.push("--no-sha-pin-proposals".into());
+    }
     out
 }
 
@@ -197,33 +290,40 @@ fn build_cli_args(args: &StartArgs) -> Vec<String> {
 /// frontend can parse it with the assay schema (avoiding a
 /// duplicate type definition on the Rust side that would drift
 /// versus assay's actual schema).
-fn stream_stdout(stdout: std::process::ChildStdout, app: AppHandle) {
+fn stream_stdout(
+    stdout: std::process::ChildStdout,
+    app: AppHandle,
+    diag: Arc<Mutex<RunDiagnostics>>,
+) {
     let reader = BufReader::new(stdout);
     for line in reader.lines() {
         let Ok(line) = line else { break };
         if line.is_empty() {
             continue;
         }
+        if let Ok(mut d) = diag.lock() {
+            d.saw_ndjson = true;
+        }
         let _ = app.emit("assay://event", GuiEvent::Raw { line });
     }
 }
 
-/// Read assay's stderr and forward each line as a diagnostic
-/// event. assay only writes to stderr on actual errors (panics,
-/// validator setup failures, etc.) so each line is meaningful.
-fn stream_stderr(stderr: std::process::ChildStderr, app: AppHandle) {
+/// Buffer assay's stderr for the duration of the run. We don't
+/// stream it to the UI because assay routinely writes harmless
+/// breadcrumbs there. The buffered text is surfaced only when the
+/// child exits non-zero without having emitted any NDJSON.
+fn buffer_stderr(stderr: std::process::ChildStderr, diag: Arc<Mutex<RunDiagnostics>>) {
+    const MAX_STDERR_BYTES: usize = 32 * 1024;
     let reader = BufReader::new(stderr);
     for line in reader.lines() {
         let Ok(line) = line else { break };
-        if line.is_empty() {
-            continue;
+        if let Ok(mut d) = diag.lock() {
+            if d.stderr_buf.len() >= MAX_STDERR_BYTES {
+                continue;
+            }
+            d.stderr_buf.push_str(&line);
+            d.stderr_buf.push('\n');
         }
-        let _ = app.emit(
-            "assay://event",
-            GuiEvent::SpawnFailed {
-                reason: format!("assay stderr: {line}"),
-            },
-        );
     }
 }
 
@@ -231,6 +331,8 @@ fn stream_stderr(stderr: std::process::ChildStderr, app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![pick_repo, start_analysis])
         .run(tauri::generate_context!())
@@ -240,6 +342,19 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn base_args() -> StartArgs {
+        StartArgs {
+            repo: "C:/proj".into(),
+            ecosystem: "all".into(),
+            mode: "dry-run".into(),
+            threads: None,
+            fail_fast: false,
+            member_gate: false,
+            executor: "docker".into(),
+            no_sha_pin_proposals: false,
+        }
+    }
 
     #[test]
     fn app_state_running_flag_is_shareable_across_threads() {
@@ -268,14 +383,7 @@ mod tests {
 
     #[test]
     fn build_cli_args_dry_run_basic() {
-        let args = StartArgs {
-            repo: "C:/proj".into(),
-            ecosystem: "all".into(),
-            mode: "dry-run".into(),
-            threads: None,
-            fail_fast: false,
-            member_gate: false,
-        };
+        let args = base_args();
         assert_eq!(
             build_cli_args(&args),
             vec!["analyze", "--format", "ndjson", "--repo", "C:/proj"]
@@ -284,14 +392,14 @@ mod tests {
 
     #[test]
     fn build_cli_args_validate_with_ecosystem_filter_and_threads() {
-        let args = StartArgs {
-            repo: "/repo".into(),
-            ecosystem: "npm".into(),
-            mode: "validate".into(),
-            threads: Some(8),
-            fail_fast: true,
-            member_gate: true,
-        };
+        let mut args = base_args();
+        args.repo = "/repo".into();
+        args.ecosystem = "npm".into();
+        args.mode = "validate".into();
+        args.threads = Some(8);
+        args.fail_fast = true;
+        args.member_gate = true;
+        args.executor = "host".into();
         let cli = build_cli_args(&args);
         assert!(cli.contains(&"--ecosystem".to_string()));
         assert!(cli.contains(&"npm".to_string()));
@@ -300,18 +408,51 @@ mod tests {
         assert!(cli.contains(&"8".to_string()));
         assert!(cli.contains(&"--fail-fast".to_string()));
         assert!(cli.contains(&"--member-gate".to_string()));
+        assert!(cli.contains(&"--executor".to_string()));
+        assert!(cli.contains(&"host".to_string()));
     }
 
     #[test]
     fn build_cli_args_apply_pr_mode_emits_correct_flag() {
-        let args = StartArgs {
-            repo: "/r".into(),
-            ecosystem: "cargo".into(),
-            mode: "apply-pr".into(),
-            threads: None,
-            fail_fast: false,
-            member_gate: false,
-        };
+        let mut args = base_args();
+        args.mode = "apply-pr".into();
+        args.ecosystem = "cargo".into();
         assert!(build_cli_args(&args).contains(&"--apply-pr".to_string()));
+    }
+
+    #[test]
+    fn build_cli_args_no_sha_pin_proposals_flag() {
+        let mut args = base_args();
+        args.no_sha_pin_proposals = true;
+        assert!(build_cli_args(&args).contains(&"--no-sha-pin-proposals".to_string()));
+    }
+
+    #[test]
+    fn build_cli_args_executor_omitted_on_dry_run() {
+        // The validator doesn't run in dry-run mode and assay
+        // silently ignores --executor there. Omitting it keeps
+        // the CLI preview shown to the user clean and matches
+        // what assay actually consumes.
+        let mut args = base_args();
+        args.executor = "host".into();
+        let cli = build_cli_args(&args);
+        assert!(!cli.contains(&"--executor".to_string()));
+    }
+
+    #[test]
+    fn build_cli_args_executor_present_on_validate() {
+        let mut args = base_args();
+        args.mode = "validate".into();
+        args.executor = "docker".into();
+        let cli = build_cli_args(&args);
+        assert!(cli.contains(&"--executor".to_string()));
+        assert!(cli.contains(&"docker".to_string()));
+    }
+
+    #[test]
+    fn run_diagnostics_starts_empty() {
+        let d = RunDiagnostics::default();
+        assert!(!d.saw_ndjson);
+        assert!(d.stderr_buf.is_empty());
     }
 }

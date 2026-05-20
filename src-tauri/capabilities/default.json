@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for the assay-gui main window. Allows the WebView to invoke our custom Tauri commands plus the dialog plugin (used to pick a repo folder).",
+  "description": "Default capability set for the assay-gui main window. Allows the WebView to invoke our custom Tauri commands, the dialog plugin (folder picker), the store plugin (recent repos + settings persistence), and the clipboard-manager plugin (one-click copy of stderr/findings on red proposals).",
   "windows": [
     "main"
   ],
@@ -10,6 +10,21 @@
     "dialog:default",
     "dialog:allow-open",
     "core:event:allow-listen",
-    "core:event:allow-unlisten"
+    "core:event:allow-unlisten",
+    "store:default",
+    "store:allow-get",
+    "store:allow-set",
+    "store:allow-save",
+    "store:allow-load",
+    "store:allow-has",
+    "store:allow-delete",
+    "store:allow-clear",
+    "store:allow-keys",
+    "store:allow-values",
+    "store:allow-entries",
+    "store:allow-length",
+    "store:allow-reset",
+    "clipboard-manager:default",
+    "clipboard-manager:allow-write-text"
   ]
 }
