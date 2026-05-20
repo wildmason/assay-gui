@@ -168,8 +168,13 @@ async fn start_analysis(
 
     let cmd_args = build_cli_args(&args);
     let command_label = format!("assay {}", cmd_args.join(" "));
-    app.emit("assay://event", GuiEvent::Spawning { command: command_label })
-        .ok();
+    app.emit(
+        "assay://event",
+        GuiEvent::Spawning {
+            command: command_label,
+        },
+    )
+    .ok();
 
     let child = Command::new("assay")
         .args(&cmd_args)
@@ -184,7 +189,9 @@ async fn start_analysis(
             );
             app.emit(
                 "assay://event",
-                GuiEvent::SpawnFailed { reason: reason.clone() },
+                GuiEvent::SpawnFailed {
+                    reason: reason.clone(),
+                },
             )
             .ok();
             *state.running.lock().map_err(|e| e.to_string())? = false;
