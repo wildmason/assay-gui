@@ -28,6 +28,41 @@ cargo tauri build
 
 Produces the installer + raw binary under `src-tauri/target/release/bundle/`.
 
+## Release
+
+Tag pushes trigger `.github/workflows/release.yml`, which runs the verify matrix (fmt / clippy / lib tests on ubuntu/macos/windows), creates a draft GitHub Release, builds via `tauri-action` across:
+
+- `windows-latest` → `assay_<ver>_x64-setup.exe` (NSIS) + `assay_<ver>_x64_en-US.msi` (**unsigned** — no Authenticode cert configured; SmartScreen will warn)
+- `macos-14` → `Assay_<ver>_universal.dmg` (Intel + Apple Silicon, **signed + notarized** when Apple secrets are configured)
+- `ubuntu-22.04` → `.deb` + `.AppImage` (glibc 2.35 floor — works on Ubuntu 22+, Debian 12+, RHEL 9+)
+
+…then flips the draft to published. The macOS row uses `scripts/macos-ssh-tauri.sh` (verbatim from Mortar) to patch `bundle_dmg.sh`'s `SKIP_JENKINS` default for SSH/CI hosts and to submit + staple DMG notarization when the Apple notary env is present.
+
+### Required repo secrets (macOS signing path)
+
+Set these in GitHub repo settings → Secrets → Actions before pushing the first signed tag. The `preflight` job refuses to run the build matrix on tag pushes when any are missing:
+
+| Secret | Source |
+|---|---|
+| `APPLE_CERTIFICATE` | base64-encoded `Developer ID Application` `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | `.p12` export password |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: <name> (<TEAMID>)` |
+| `APPLE_API_ISSUER` | App Store Connect API issuer UUID |
+| `APPLE_API_KEY` | App Store Connect API key ID |
+| `APPLE_API_KEY_FILE` | base64 of the `AuthKey_<ID>.p8` itself |
+
+For unsigned dry-runs of the matrix, use `workflow_dispatch` with a tag input — the preflight gate is skipped.
+
+### Local dispatch via CI Forge
+
+The workflow is shape-compatible with [CI Forge](https://github.com/wildmason/ci-forge). Once the local fleet is registered + `forge mirror-actions --preset wildmason` has seeded the action store, you can bypass hosted-runner minutes:
+
+```sh
+forge run --workflow .github/workflows/release.yml \
+          --event workflow_dispatch \
+          --input tag=vX.Y.Z
+```
+
 ## Why
 
 The CLI already does the heavy lifting and ships per-proposal verdicts. The GUI is for the moments where you want a sweep visualization: "is the @angular/* cohort going through together?", "which proposal is the worker on right now?", "did the tokio family land green?" Watching the sweep complete is hugely more informative than waiting for the end-of-run summary text.
