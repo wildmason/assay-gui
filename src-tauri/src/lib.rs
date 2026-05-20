@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! assay-gui — Tauri 2 shell that wraps the `assay` CLI.
 //!
 //! The frontend invokes `start_analysis` with a [`StartArgs`]
@@ -15,7 +17,7 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
@@ -63,10 +65,16 @@ enum GuiEvent {
 /// State held inside the Tauri app. Right now only used to gate
 /// "one run at a time" — clicking Start while a run is in progress
 /// is rejected by the backend.
-#[derive(Default)]
+///
+/// The `running` flag is wrapped in `Arc<Mutex<...>>` so the
+/// child-process waiter thread can hold its own owning handle to
+/// the lock without needing a raw-pointer cast back into Tauri's
+/// state storage. Cloning an `Arc<Mutex<bool>>` is a single atomic
+/// refcount bump per spawn.
+#[derive(Default, Clone)]
 pub struct AppState {
     /// `true` while a child `assay` process is active.
-    running: Mutex<bool>,
+    running: Arc<Mutex<bool>>,
 }
 
 /// Open a folder picker and return the chosen path (or `None` if
@@ -132,18 +140,16 @@ async fn start_analysis(
     thread::spawn(move || stream_stderr(stderr, stderr_app));
 
     let app_for_wait = app.clone();
-    let running_handle = state.inner() as *const AppState;
-    // SAFETY: AppState is owned by the Tauri runtime for the app's
-    // lifetime, which is strictly longer than this spawned thread
-    // (the thread runs to child exit; the app outlives all
-    // children). The pointer is never freed during this thread's
-    // execution.
-    let running_handle = running_handle as usize;
+    // Cheap Arc::clone — the waiter thread now owns its own handle
+    // to the `running` lock and the Tauri State storage is not
+    // touched after this point. Replaces an earlier raw-pointer
+    // cast that depended on the Tauri runtime not relocating
+    // managed state, which is an implementation detail we have no
+    // contract on.
+    let running = Arc::clone(&state.inner().running);
     thread::spawn(move || {
         let exit_code = child.wait().ok().and_then(|s| s.code());
-        // SAFETY: see above.
-        let state_ref = unsafe { &*(running_handle as *const AppState) };
-        if let Ok(mut guard) = state_ref.running.lock() {
+        if let Ok(mut guard) = running.lock() {
             *guard = false;
         }
         app_for_wait
@@ -234,6 +240,31 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_state_running_flag_is_shareable_across_threads() {
+        // Regression guard for the prior `unsafe { &*(usize as
+        // *const AppState) }` cast in the waiter thread. The new
+        // shape stores `running` as `Arc<Mutex<bool>>` so a cheap
+        // `Arc::clone` lets a spawned thread mutate the flag
+        // without touching Tauri's state storage.
+        let state = AppState::default();
+        let cloned = Arc::clone(&state.running);
+        // Original thread sets the flag.
+        *state.running.lock().unwrap() = true;
+        // Spawned thread reads + flips it. This mirrors the
+        // start_analysis → child-wait waiter pattern exactly.
+        let handle = thread::spawn(move || {
+            let mut g = cloned.lock().unwrap();
+            assert!(*g, "spawned thread should see writes from the original");
+            *g = false;
+        });
+        handle.join().expect("spawned thread should complete");
+        assert!(
+            !*state.running.lock().unwrap(),
+            "original thread should see the spawned thread's write"
+        );
+    }
 
     #[test]
     fn build_cli_args_dry_run_basic() {
