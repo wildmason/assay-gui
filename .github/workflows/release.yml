@@ -1,0 +1,351 @@
+name: Release
+
+# Tag push produces a draft release with per-platform installers attached.
+# `workflow_dispatch` is available for unsigned CI dry-runs — the preflight
+# secret-gate is skipped for dispatch so green-path testing doesn't require
+# Apple enrollment.
+#
+# Repository secrets the tag-push path REQUIRES (matching the Mortar
+# release pipeline; the macOS bundling silently produces ad-hoc-signed
+# artefacts when these are absent, which would trivially ship unsigned
+# binaries to users — preflight refuses that case):
+#
+#   Apple Developer signing + notarization (macOS):
+#     APPLE_CERTIFICATE                   — base64-encoded .p12
+#     APPLE_CERTIFICATE_PASSWORD          — .p12 password
+#     APPLE_SIGNING_IDENTITY              — "Developer ID Application: <name> (<TEAMID>)"
+#     APPLE_API_ISSUER                    — App Store Connect API issuer UUID
+#     APPLE_API_KEY                       — App Store Connect API key ID
+#     APPLE_API_KEY_FILE                  — base64 of the .p8 itself
+#
+# Windows code signing is NOT currently configured — the Windows row
+# intentionally produces unsigned .msi + .exe bundles. SmartScreen will
+# warn users on first launch until an Authenticode cert is acquired.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name (workflow_dispatch only; tag must already exist)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  # Tag-push only. Refuses to fan out the build matrix when any required
+  # Apple notarization secret is absent or empty — without this guard a
+  # repo whose secrets were never set up would build ad-hoc-signed macOS
+  # bundles and trip Gatekeeper for every downstream user.
+  preflight:
+    name: Preflight (release-signing secrets present)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Assert Apple notarization secrets are present
+        env:
+          APPLE_CERTIFICATE:                  ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD:         ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY:             ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER:                   ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY:                      ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_FILE:                 ${{ secrets.APPLE_API_KEY_FILE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for v in \
+            APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_FILE
+          do
+            value="${!v}"
+            if [ -z "$value" ]; then
+              missing+=("$v")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Refusing to build a release tag ($GITHUB_REF_NAME) with missing Apple notarization secrets:"
+            for v in "${missing[@]}"; do
+              echo "  - $v"
+            done
+            echo ""
+            echo "A release tag push MUST have every Apple signing secret configured,"
+            echo "otherwise the resulting draft would ship ad-hoc-signed macOS bundles"
+            echo "that fail Gatekeeper on every downstream machine. Use"
+            echo "workflow_dispatch for unsigned CI dry-runs instead."
+            exit 1
+          fi
+          echo "All Apple notarization secrets present. Proceeding to build."
+
+  verify:
+    name: Verify ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # The package version in src-tauri/Cargo.toml drives every bundle
+      # filename. A mismatched tag silently produces installers named for
+      # the prior version — surface the drift before any bundling happens.
+      - name: Verify tag matches Cargo.toml version
+        if: github.event_name == 'push'
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          manifest=$(cargo pkgid | sed -E 's/^.*[#@]//')
+          echo "tag: $tag"
+          echo "manifest version: $manifest"
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::tag v${tag} does not match src-tauri/Cargo.toml version ${manifest}"
+            exit 1
+          fi
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Check formatting
+        working-directory: src-tauri
+        run: cargo fmt --all --check
+
+      # See ci.yml comment — `custom-protocol` default feature hides the
+      # lib's #[cfg(test)] mod from `cargo test`. Disabling default
+      # features keeps the 8 unit tests visible.
+      - name: Run lib tests
+        working-directory: src-tauri
+        run: cargo test --lib --no-default-features --locked
+
+      - name: Run clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  create-release:
+    name: Create draft release
+    needs: [verify]
+    # On tag push we additionally require preflight to clear. On
+    # workflow_dispatch we skip preflight; `always()` keeps that path
+    # alive even when preflight is `skipped`.
+    if: always() && needs.verify.result == 'success' && (github.event_name != 'push' || needs.preflight.result == 'success')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve tag name
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or reset draft release
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=true --title "$TAG"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes --title "$TAG"
+          fi
+
+  build:
+    name: Build (${{ matrix.label }})
+    needs: [verify, create-release]
+    if: always() && needs.create-release.result == 'success'
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      # Windows failures should not mask macOS / Linux successes. Want
+      # to see all three outcomes per run so RC cycles iterate faster.
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows
+            platform: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            tauri-args: ''
+          - label: macos
+            # macos-14 is the ARM64 runner. Building --target
+            # universal-apple-darwin here produces a single DMG that
+            # runs on Intel and Apple Silicon.
+            platform: macos-14
+            rust-target: aarch64-apple-darwin,x86_64-apple-darwin
+            tauri-args: '--target universal-apple-darwin'
+          - label: linux
+            # ubuntu-22.04 has webkit2gtk-4.1 + a glibc 2.35 floor that
+            # works on Ubuntu 22+, Debian 12+, RHEL 9+. ubuntu-latest is
+            # currently 24.04 and its glibc 2.39 would refuse to load on
+            # older distros.
+            platform: ubuntu-22.04
+            rust-target: x86_64-unknown-linux-gnu
+            tauri-args: ''
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Linux system dependencies
+        if: matrix.label == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Cache Cargo artefacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-
+
+      # Stage the Apple notary .p8 to disk so xcrun notarytool can read
+      # it via APPLE_API_KEY_PATH. Skipped if the secret is absent (the
+      # macos-ssh-tauri.sh wrapper handles the absent case gracefully by
+      # building ad-hoc-signed bundles — but preflight already refused
+      # tag pushes without the secret).
+      - name: Write Apple API key to disk (macOS)
+        if: matrix.label == 'macos' && env.APPLE_API_KEY_FILE != ''
+        shell: bash
+        env:
+          APPLE_API_KEY_FILE: ${{ secrets.APPLE_API_KEY_FILE }}
+        run: |
+          mkdir -p ~/private_keys
+          echo "$APPLE_API_KEY_FILE" | base64 --decode > ~/private_keys/AuthKey.p8
+          echo "APPLE_API_KEY_PATH=$HOME/private_keys/AuthKey.p8" >> "$GITHUB_ENV"
+
+      # tauri-bundler reads signing config from env vars; an env var set
+      # to "" trips the macOS signing path (verified upstream in
+      # tauri-v2.10.3 crates/tauri-bundler/src/bundle/macos/sign.rs). GH
+      # Actions evaluates `${{ secrets.X }}` to "" when the secret is
+      # unset. Only export each var when its source secret is non-empty.
+      - name: Stage signing env (skip empty secrets)
+        shell: bash
+        env:
+          IN_APPLE_CERTIFICATE:                  ${{ secrets.APPLE_CERTIFICATE }}
+          IN_APPLE_CERTIFICATE_PASSWORD:         ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IN_APPLE_SIGNING_IDENTITY:             ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          IN_APPLE_API_ISSUER:                   ${{ secrets.APPLE_API_ISSUER }}
+          IN_APPLE_API_KEY:                      ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          export_if_present() {
+            local name="$1"
+            local value="$2"
+            if [ -n "$value" ]; then
+              # Heredoc delimiter mixes PID + bash $RANDOM so it cannot
+              # collide with base64-encoded secret content. Heredoc form
+              # is needed for multi-line .p12 blobs.
+              local delim="EOF_ASSAY_GUI_SIGN_${$}_${RANDOM}_${RANDOM}"
+              {
+                printf '%s<<%s\n' "$name" "$delim"
+                printf '%s\n' "$value"
+                printf '%s\n' "$delim"
+              } >> "$GITHUB_ENV"
+            fi
+          }
+          export_if_present APPLE_CERTIFICATE          "$IN_APPLE_CERTIFICATE"
+          export_if_present APPLE_CERTIFICATE_PASSWORD "$IN_APPLE_CERTIFICATE_PASSWORD"
+          export_if_present APPLE_SIGNING_IDENTITY     "$IN_APPLE_SIGNING_IDENTITY"
+          export_if_present APPLE_API_ISSUER           "$IN_APPLE_API_ISSUER"
+          export_if_present APPLE_API_KEY              "$IN_APPLE_API_KEY"
+
+      - name: Build + bundle (tauri-action)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # All APPLE_* env vars are promoted into the job environment
+          # by the "Stage signing env" step above — only when their
+          # source secret is non-empty. APPLE_API_KEY_PATH is exported
+          # by the "Write Apple API key" step when present.
+        with:
+          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          releaseName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          releaseBody: |
+            Automated release build.
+
+            Artefacts for Windows (unsigned), macOS (universal — signed +
+            notarized), and Linux (amd64) attach as each matrix row
+            finishes. Promote via the GitHub UI or by re-running the
+            publish-release job below.
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || github.event_name == 'workflow_dispatch' }}
+          args: ${{ matrix.tauri-args }}
+          # macOS-only tauriScript wrapper patches the tauri-cli's
+          # embedded bundle_dmg.sh template to default SKIP_JENKINS=1
+          # (the Finder window-manipulation AppleScript hangs over SSH
+          # with `AppleEvent timed out -1712`; on hosted runners the
+          # patch is harmless). When Apple notary env is present, the
+          # wrapper also submits + staples the DMG container after Tauri
+          # builds it and before tauri-action uploads. Verbatim copy of
+          # mortar/scripts/macos-ssh-tauri.sh.
+          tauriScript: ${{ matrix.label == 'macos' && 'bash scripts/macos-ssh-tauri.sh' || '' }}
+
+  publish-release:
+    name: Publish release
+    needs: [build]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Resolve tag name
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish draft release
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

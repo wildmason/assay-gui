@@ -40,7 +40,17 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "Live cohort-aware progress GUI for assay (dep-assay)",
-    "longDescription": "Tauri desktop utility that wraps the assay CLI. Spawns 'assay analyze --format ndjson' against a repo, parses the event stream, and renders each proposed dependency upgrade as a live progress row. Cohort lockstep groups (@angular/*, @tiptap/*, tokio + tokio-util, etc.) render with a containing visual affordance so framework-family upgrades visibly evaluate as one atomic unit."
+    "longDescription": "Tauri desktop utility that wraps the assay CLI. Spawns 'assay analyze --format ndjson' against a repo, parses the event stream, and renders each proposed dependency upgrade as a live progress row. Cohort lockstep groups (@angular/*, @tiptap/*, tokio + tokio-util, etc.) render with a containing visual affordance so framework-family upgrades visibly evaluate as one atomic unit.",
+    "macOS": {
+      "signingIdentity": null,
+      "entitlements": null,
+      "providerShortName": null
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
+    }
   },
   "plugins": {}
 }
