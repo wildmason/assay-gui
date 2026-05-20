@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "assay",
+  "version": "0.1.0",
+  "identifier": "com.wildmason.assay-gui",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": null,
+    "beforeDevCommand": null,
+    "beforeBuildCommand": null
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "assay — dependency upgrade impact analyzer",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 520,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Live cohort-aware progress GUI for assay (dep-assay)",
+    "longDescription": "Tauri desktop utility that wraps the assay CLI. Spawns 'assay analyze --format ndjson' against a repo, parses the event stream, and renders each proposed dependency upgrade as a live progress row. Cohort lockstep groups (@angular/*, @tiptap/*, tokio + tokio-util, etc.) render with a containing visual affordance so framework-family upgrades visibly evaluate as one atomic unit."
+  },
+  "plugins": {}
+}

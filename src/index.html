@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>assay</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⟁</span>
+      <span class="brand-name">assay</span>
+      <span class="brand-sub">dependency upgrade impact analyzer</span>
+    </div>
+    <div id="run-status" class="run-status pill pill-idle">idle</div>
+  </header>
+
+  <main class="main">
+    <section class="controls">
+      <div class="control-row">
+        <label class="ctl" for="repo">Repository</label>
+        <div class="repo-pick">
+          <input id="repo" type="text" placeholder="C:\path\to\repo (or click Browse)" spellcheck="false" />
+          <button id="browse" class="btn btn-secondary" type="button">Browse…</button>
+        </div>
+      </div>
+
+      <div class="control-row two-col">
+        <div>
+          <label class="ctl" for="ecosystem">Ecosystem</label>
+          <select id="ecosystem">
+            <option value="all" selected>all</option>
+            <option value="cargo">cargo</option>
+            <option value="github-actions">github-actions</option>
+            <option value="npm">npm</option>
+          </select>
+        </div>
+        <div>
+          <label class="ctl" for="mode">Mode</label>
+          <select id="mode">
+            <option value="dry-run" selected>dry-run (report only)</option>
+            <option value="validate">validate (run real CI; no commit)</option>
+            <option value="apply-local">apply-local (commit greens to current branch)</option>
+            <option value="apply-pr">apply-pr (branch + push + open PR)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="control-row three-col">
+        <div>
+          <label class="ctl" for="threads">Threads</label>
+          <input id="threads" type="number" min="1" max="64" placeholder="default" />
+        </div>
+        <label class="check">
+          <input id="fail-fast" type="checkbox" />
+          <span>fail-fast</span>
+        </label>
+        <label class="check">
+          <input id="member-gate" type="checkbox" />
+          <span>member-gate</span>
+        </label>
+      </div>
+
+      <div class="control-row">
+        <button id="start" class="btn btn-primary" type="button">Start analysis</button>
+        <span id="cli-preview" class="cli-preview"></span>
+      </div>
+    </section>
+
+    <section class="progress">
+      <header class="progress-header">
+        <h2>Sweep progress</h2>
+        <div class="counts">
+          <span id="count-total" class="count count-total">0 total</span>
+          <span id="count-pending" class="count count-pending">0 pending</span>
+          <span id="count-inprogress" class="count count-inprogress">0 in progress</span>
+          <span id="count-success" class="count count-success">0 ✓</span>
+          <span id="count-failure" class="count count-failure">0 ✗</span>
+        </div>
+      </header>
+      <div id="empty-state" class="empty-state">
+        <p>No run yet. Pick a repo above and click <strong>Start analysis</strong>.</p>
+      </div>
+      <ol id="proposal-list" class="proposal-list" hidden></ol>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span class="footer-cli">backed by <code>assay analyze --format ndjson</code></span>
+    <span id="footer-tail" class="footer-tail"></span>
+  </footer>
+
+  <script src="./main.js" type="module"></script>
+</body>
+</html>

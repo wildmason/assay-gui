@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability set for the assay-gui main window. Allows the WebView to invoke our custom Tauri commands plus the dialog plugin (used to pick a repo folder).",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

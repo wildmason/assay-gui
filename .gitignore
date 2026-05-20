@@ -1,0 +1,28 @@
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+src-tauri/WixTools/
+
+# Frontend deps (none for vanilla, but future-proof)
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Build artifacts
+dist/
+
+# Local assay test data
+.assay/
