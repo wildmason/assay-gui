@@ -13,10 +13,37 @@
       <span class="brand-name">assay</span>
       <span class="brand-sub">dependency upgrade impact analyzer</span>
     </div>
-    <div id="run-status" class="run-status pill pill-idle">idle</div>
+    <div class="topbar-actions">
+      <div id="run-status" class="run-status pill pill-idle">idle</div>
+      <button id="theme-toggle" class="icon-btn" type="button" title="Toggle theme" aria-label="Toggle theme">
+        <span id="theme-icon">☾</span>
+      </button>
+      <button id="settings-btn" class="icon-btn" type="button" title="Settings" aria-label="Settings">
+        <span aria-hidden="true">⚙</span>
+      </button>
+    </div>
   </header>
 
+  <!-- Banner surfaces stderr when assay exits non-zero before any NDJSON. -->
+  <div id="error-banner" class="error-banner" hidden>
+    <div class="error-banner-head">
+      <span class="error-banner-title">assay exited with no progress output</span>
+      <button id="error-banner-copy" class="link-btn" type="button">copy</button>
+      <button id="error-banner-dismiss" class="link-btn" type="button" aria-label="dismiss">×</button>
+    </div>
+    <pre id="error-banner-body" class="error-banner-body"></pre>
+  </div>
+
   <main class="main">
+    <!-- Recent repos render here when not in an active run and the list is non-empty. -->
+    <section id="recents" class="recents" hidden>
+      <header class="recents-header">
+        <h2>Recent repositories</h2>
+        <button id="recents-clear" class="link-btn" type="button">clear</button>
+      </header>
+      <ul id="recents-list" class="recents-list"></ul>
+    </section>
+
     <section class="controls">
       <div class="control-row">
         <label class="ctl" for="repo">Repository</label>
@@ -47,23 +74,17 @@
         </div>
       </div>
 
-      <div class="control-row three-col">
-        <div>
-          <label class="ctl" for="threads">Threads</label>
-          <input id="threads" type="number" min="1" max="64" placeholder="default" />
-        </div>
+      <div class="control-row two-col">
         <label class="check">
           <input id="fail-fast" type="checkbox" />
           <span>fail-fast</span>
         </label>
-        <label class="check">
-          <input id="member-gate" type="checkbox" />
-          <span>member-gate</span>
-        </label>
+        <span class="settings-hint">More options under <button id="open-settings-inline" class="link-btn" type="button">Settings ⚙</button></span>
       </div>
 
-      <div class="control-row">
+      <div class="control-row buttons-row">
         <button id="start" class="btn btn-primary" type="button">Start analysis</button>
+        <button id="run-again" class="btn btn-secondary" type="button" hidden>Run again</button>
         <span id="cli-preview" class="cli-preview"></span>
       </div>
     </section>
@@ -72,17 +93,39 @@
       <header class="progress-header">
         <h2>Sweep progress</h2>
         <div class="counts">
-          <span id="count-total" class="count count-total">0 total</span>
-          <span id="count-pending" class="count count-pending">0 pending</span>
-          <span id="count-inprogress" class="count count-inprogress">0 in progress</span>
-          <span id="count-success" class="count count-success">0 ✓</span>
-          <span id="count-failure" class="count count-failure">0 ✗</span>
+          <span id="count-discovered" class="count count-discovered" title="Total proposals discovered">0 discovered</span>
+          <span id="count-validating" class="count count-validating" title="Currently validating">0 validating</span>
+          <span id="count-passed" class="count count-passed" title="Passed">0 passed</span>
+          <span id="count-failed" class="count count-failed" title="Failed">0 failed</span>
         </div>
       </header>
+
+      <!-- Filters + search. Hidden until a run has surfaced proposals. -->
+      <div id="filterbar" class="filterbar" hidden>
+        <div class="filter-buttons" role="group" aria-label="Status filter">
+          <button class="chip chip-active" type="button" data-filter="all">All</button>
+          <button class="chip" type="button" data-filter="tier:compatible">Compatible</button>
+          <button class="chip" type="button" data-filter="tier:breaking">Breaking</button>
+          <button class="chip" type="button" data-filter="tier:lockfile-only">LockfileOnly</button>
+          <button class="chip" type="button" data-filter="state:success">Passed</button>
+          <button class="chip" type="button" data-filter="state:failure">Failed</button>
+        </div>
+        <input id="search" class="search" type="search" placeholder="Filter by subject…" spellcheck="false" />
+      </div>
+
       <div id="empty-state" class="empty-state">
         <p>No run yet. Pick a repo above and click <strong>Start analysis</strong>.</p>
       </div>
       <ol id="proposal-list" class="proposal-list" hidden></ol>
+
+      <!-- Root-cause clusters surface here when run_completed.failure_clusters is non-empty. -->
+      <section id="clusters" class="clusters" hidden>
+        <header class="clusters-header">
+          <h3>Root-cause clusters</h3>
+          <span class="clusters-sub">grouped by shared failure fingerprint</span>
+        </header>
+        <ul id="clusters-list" class="clusters-list"></ul>
+      </section>
     </section>
   </main>
 
@@ -90,6 +133,70 @@
     <span class="footer-cli">backed by <code>assay analyze --format ndjson</code></span>
     <span id="footer-tail" class="footer-tail"></span>
   </footer>
+
+  <!-- Settings panel: side drawer. Persisted via tauri-plugin-store. -->
+  <div id="settings-overlay" class="overlay" hidden>
+    <div class="drawer">
+      <header class="drawer-head">
+        <h2>Settings</h2>
+        <button id="settings-close" class="icon-btn" type="button" aria-label="close">×</button>
+      </header>
+      <div class="drawer-body">
+        <fieldset class="field-group">
+          <legend>Executor</legend>
+          <label class="radio">
+            <input type="radio" name="executor" value="docker" checked />
+            <span>Docker (sandboxed; default)</span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="executor" value="host" />
+            <span>Host (faster; no sandbox)</span>
+          </label>
+          <p class="field-help">Used by the validator stage. Ignored in dry-run mode.</p>
+        </fieldset>
+
+        <fieldset class="field-group">
+          <legend>Worker threads</legend>
+          <input id="settings-threads" type="number" min="1" max="64" value="4" />
+          <p class="field-help">Workers running the apply+validate pipeline. Default: 4.</p>
+        </fieldset>
+
+        <fieldset class="field-group">
+          <legend>Behavior</legend>
+          <label class="check">
+            <input id="settings-member-gate" type="checkbox" />
+            <span>member-gate (skip workflows targeting only non-affected workspace members)</span>
+          </label>
+          <label class="check">
+            <input id="settings-no-sha-pin" type="checkbox" />
+            <span>Skip SHA-pin hardening proposals</span>
+          </label>
+        </fieldset>
+
+        <fieldset class="field-group">
+          <legend>Appearance</legend>
+          <label class="radio">
+            <input type="radio" name="theme" value="system" checked />
+            <span>Follow system</span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="theme" value="dark" />
+            <span>Dark</span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="theme" value="light" />
+            <span>Light</span>
+          </label>
+        </fieldset>
+      </div>
+      <footer class="drawer-foot">
+        <button id="settings-save" class="btn btn-primary" type="button">Save</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Lightweight toast for clipboard copies. -->
+  <div id="toast" class="toast" hidden></div>
 
   <script src="./main.js" type="module"></script>
 </body>
