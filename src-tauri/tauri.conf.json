@@ -10,6 +10,7 @@
     "beforeBuildCommand": null
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "assay — dependency upgrade impact analyzer",
@@ -19,7 +20,8 @@
         "minHeight": 520,
         "resizable": true,
         "fullscreen": false,
-        "decorations": true
+        "decorations": true,
+        "devtools": true
       }
     ],
     "security": {

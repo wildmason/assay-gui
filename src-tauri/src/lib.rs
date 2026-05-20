@@ -20,6 +20,7 @@ use std::thread;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_dialog::DialogExt;
 
 /// Arguments the frontend hands us when the user clicks "Start
 /// analysis". Mirrors the subset of assay CLI flags the UI
@@ -66,6 +67,21 @@ enum GuiEvent {
 pub struct AppState {
     /// `true` while a child `assay` process is active.
     running: Mutex<bool>,
+}
+
+/// Open a folder picker and return the chosen path (or `None` if
+/// the user cancelled). Invoked from the frontend so the GUI does
+/// NOT depend on the dialog plugin's JS bridge being globally
+/// exposed — sidesteps the `withGlobalTauri` plugin-namespace gap.
+#[tauri::command]
+async fn pick_repo(app: AppHandle) -> Result<Option<String>, String> {
+    use std::sync::mpsc;
+    let (tx, rx) = mpsc::channel::<Option<String>>();
+    app.dialog().file().pick_folder(move |result| {
+        let path = result.map(|p| p.to_string());
+        let _ = tx.send(path);
+    });
+    rx.recv().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -210,7 +226,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![start_analysis])
+        .invoke_handler(tauri::generate_handler![pick_repo, start_analysis])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

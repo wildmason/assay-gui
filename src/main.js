@@ -6,10 +6,25 @@
 // render inside a containing <div class="cohort"> so multi-member
 // cohort lockstep groups are visually one unit. Per-proposal rows
 // outside any cohort render as a flat row in the list.
+//
+// All Tauri global access is deferred until DOMContentLoaded so a
+// missing global doesn't tear down module evaluation before the
+// user sees any UI. Errors are logged to console AND surfaced in
+// the UI via the run-status pill.
 
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
-const { open: openDialog } = window.__TAURI__.dialog;
+function tauri() {
+  // `withGlobalTauri: true` in tauri.conf.json exposes the core
+  // bindings under window.__TAURI__. The dialog/file plugins are
+  // NOT auto-exposed there in Tauri 2; we use `invoke` to call
+  // Rust commands that wrap those plugin APIs instead.
+  const T = window.__TAURI__;
+  if (!T || !T.core || !T.event) {
+    throw new Error(
+      "window.__TAURI__ globals not present — is `app.withGlobalTauri: true` set in tauri.conf.json?"
+    );
+  }
+  return { invoke: T.core.invoke, listen: T.event.listen };
+}
 
 // --- DOM refs ----------------------------------------------------
 
@@ -85,13 +100,15 @@ updateCliPreview();
 
 els.browse.addEventListener("click", async () => {
   try {
-    const picked = await openDialog({ directory: true, multiple: false });
+    const { invoke } = tauri();
+    const picked = await invoke("pick_repo");
     if (typeof picked === "string" && picked.length > 0) {
       els.repo.value = picked;
       updateCliPreview();
     }
   } catch (err) {
-    console.error("dialog open failed", err);
+    console.error("pick_repo failed", err);
+    setStatus(`browse failed: ${err}`, "error");
   }
 });
 
@@ -109,6 +126,7 @@ els.start.addEventListener("click", async () => {
   state.runActive = true;
   els.start.disabled = true;
   try {
+    const { invoke } = tauri();
     await invoke("start_analysis", {
       args: {
         repo,
@@ -128,7 +146,9 @@ els.start.addEventListener("click", async () => {
 
 // --- Event handling ----------------------------------------------
 
-listen("assay://event", (e) => {
+function startEventListener() {
+  const { listen } = tauri();
+  return listen("assay://event", (e) => {
   const payload = e.payload;
   if (!payload || !payload.type) return;
   switch (payload.type) {
@@ -155,6 +175,18 @@ listen("assay://event", (e) => {
       break;
     default:
       console.warn("unhandled event", payload);
+  }
+  });
+}
+
+// Kick off the event listener once the DOM is parsed (so Tauri
+// globals are present and `els.*` are bound).
+window.addEventListener("DOMContentLoaded", () => {
+  try {
+    startEventListener();
+  } catch (err) {
+    console.error("could not subscribe to assay://event", err);
+    setStatus(`init failed: ${err}`, "error");
   }
 });
 
