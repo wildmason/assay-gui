@@ -1,6 +1,6 @@
 [package]
 name = "assay-gui"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.77"
 description = "Tauri desktop utility for assay (dep-assay): live cohort-aware progress visualization for dependency upgrade sweeps"

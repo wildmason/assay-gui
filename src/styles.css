@@ -79,6 +79,19 @@ body {
   flex-direction: column;
 }
 
+/* The HTML `hidden` attribute relies on the UA stylesheet's
+ * `[hidden] { display: none }`, which has lower specificity than
+ * class-based `display: flex/grid/block` rules below. Without this
+ * override the settings overlay (and any other element toggled via
+ * `el.hidden = true/false` whose class also sets `display:`) is
+ * permanently visible — that was the 0.2.0 settings-trap bug. The
+ * `!important` is justified: `hidden` means hidden, period; no
+ * class-based layout should ever beat it.
+ */
+[hidden] {
+  display: none !important;
+}
+
 .topbar {
   display: flex;
   align-items: center;
