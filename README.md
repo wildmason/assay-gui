@@ -1,24 +1,31 @@
 # assay-gui
 
-Tauri desktop utility that wraps the [`assay`](https://crates.io/crates/dep-assay) CLI with a live-progress GUI. Point it at a repo, watch each proposed dependency upgrade flow through validation in real time, with cohort lockstep members visually grouped under one container so you can see the framework lockstep behavior at a glance.
+Tauri desktop utility that wraps the [`assay`](https://crates.io/crates/dep-assay) CLI with a guided setup wizard and a live-progress sweep. A four-step wizard (**Repository → Scope → Action → Review**) tames assay's many config flags into plain-language choices with a running "what will happen" summary and the exact command; then watch each proposed dependency upgrade flow through validation in real time, with cohort lockstep members visually grouped under one container so you can see the framework lockstep behavior at a glance.
 
-**Architecture:** a small Tauri 2 shell. The Rust backend spawns `assay analyze --format ndjson <flags>` as a child process, parses each NDJSON event line, and forwards a typed event to the WebView. The vanilla-JS frontend listens on those events and updates per-proposal rows from `pending` → `in_progress` → `complete` (green check / red x) as each event arrives. Cohort groups render with a containing affordance so multi-member cohorts (`@angular/*`, `@tiptap/*`, `tokio + tokio-util`, etc.) are visually one unit being evaluated together.
+**Architecture:** a small Tauri 2 shell with a two-phase frontend. The Rust backend spawns `assay analyze --format ndjson <flags>` as a child process, parses each NDJSON event line, and forwards a typed event to the WebView.
+
+- **Setup phase — guided wizard.** The wizard assembles a run config: pick a repo (with one-click recents), narrow the **scope** (ecosystems + risk tiers), choose a risk-laddered **action** (report → validate → commit → open-PR) whose sandbox sub-options (Docker/host, worker threads, fail-fast) progressively reveal, and **review** a one-sentence plan + the exact `assay` command before you run. assay has no per-tier flag, so tier scoping is applied client-side at ingestion — except the breaking-only case, which maps to `--only-breaking`.
+- **Run phase — live sweep + results.** Per-proposal rows stream `pending` → `validating` → pass/fail (green check / red ✗) as each event arrives, behind a determinate progress bar. Multi-member cohorts (`@angular/*`, `tokio + tokio-util`, `serde + serde_derive`, etc.) render under one container as a lockstep unit. The run ends with a result banner ("N passed · M need attention", with an *Apply N passing* CTA), failures expandable to findings + a suggested fix, and **root-cause clusters** grouping failures by shared fingerprint.
 
 No frontend framework and no bundler — plain HTML + CSS + JS served directly. The
-UI is built from [Aegis v2](https://github.com/wildmason/aegis-unified) `ae-*` web
-components (buttons, inputs, selects, checkboxes, radios, tags, the settings
-drawer, the alert banner, toasts) styled by Aegis's `--ae-*` design tokens, with a
-built-in **theme picker** (Settings › Appearance) that re-skins the whole UI across
-every Aegis brand × variant at runtime. Small footprint by design — the whole
-production build is a single ~11 MB Tauri binary.
+standard controls are [Aegis v2](https://github.com/wildmason/aegis-unified) `ae-*`
+web components (buttons, inputs, selects, segmented controls, switches, checkboxes,
+tags, the settings drawer, the alert banner, toasts); the design's distinctive
+affordances (the step rail, the risk-laddered action cards, the sweep
+visualization) are bespoke but painted entirely from Aegis's `--ae-*` design
+tokens, so the built-in **theme picker** (Settings › Appearance) re-skins the whole
+UI — wizard and sweep alike — across every Aegis brand × variant at runtime. Small
+footprint by design — the whole production build is a single ~11 MB Tauri binary.
 
 ## Theming
 
-The entire UI wears any Aegis v2 brand — neutral **Aegis** (follows your OS
-light / dark / high-contrast), **Cinnabar**, **Editorial**, **Metro**, **Crucible**,
-or any of the 12 **Spectrum** palettes (incl. the GitHub-flavored *Source Control
-Dark*). Pick one live from **Settings › Appearance**; the header ☀/☾ button is a
-quick light↔dark flip for the current brand. Your choice persists via
+The entire UI — wizard and sweep alike — wears any Aegis v2 brand: neutral
+**Aegis** (follows your OS light / dark / high-contrast), **Cinnabar**,
+**Editorial**, **Metro**, **Crucible**, or any of the 12 **Spectrum** palettes
+(incl. the GitHub-flavored *Source Control Dark*). Pick one live from
+**Settings › Appearance**, which also carries **density** (compact / regular /
+comfy) and **step-rail layout** (side / top) controls; the header ☀/☾ button is a
+quick light↔dark flip for the current brand. Every choice persists via
 `tauri-plugin-store`.
 
 Aegis ships as `ae-*` Lit elements that externalize `lit`, which a bundler-free

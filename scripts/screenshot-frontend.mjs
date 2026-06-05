@@ -1,11 +1,11 @@
-// Visual-QA the reskinned frontend without Tauri.
+// Visual-QA the redesigned frontend without Tauri.
 //
-// Serves src/ as a static site and drives it with Playwright (chromium from
-// the sibling aegis-v2 checkout). The Tauri globals are absent, but the code
-// degrades gracefully (no store, no event stream), so the shell, the ae-*
-// controls, the theme picker, and the sweep-list styling all render. We inject
-// a small static sweep so the list isn't empty, then capture several Aegis
-// brands + the settings drawer.
+// Serves src/ as a static site and drives it with Playwright (chromium from the
+// sibling aegis-v2 checkout). The Tauri globals are absent, but the code
+// degrades gracefully (no store, no event stream), so the wizard, the ae-*
+// controls, the theme picker, and the sweep visualization all render. We drive
+// the wizard with real interactions and inject a static run state so both
+// phases are captured across several Aegis brands.
 //
 //   node scripts/screenshot-frontend.mjs            (assumes ../../aegis-v2)
 //   node scripts/screenshot-frontend.mjs <aegis>
@@ -47,39 +47,21 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const port = server.address().port;
 const base = `http://127.0.0.1:${port}/`;
-
 await mkdir(outDir, { recursive: true });
-
-// A static sample sweep, matching main.js's render markup, so the list shows.
-const SAMPLE_SWEEP = `
-  <li class="proposal state-success"><span class="proposal-icon"></span>
-    <span class="proposal-text"><span class="proposal-subject">serde</span>
-      <span class="proposal-version"><span class="from">1.0.197</span><span class="arrow">→</span><span class="to">1.0.210</span></span>
-      <span class="proposal-reason">Validated: no regression observed under repo gates.</span></span>
-    <span class="proposal-tier tier-compatible">compatible</span><span class="proposal-duration">2.4 s</span><span class="proposal-chevron">▸</span></li>
-  <li class="proposal state-failure"><span class="proposal-icon"></span>
-    <span class="proposal-text"><span class="proposal-subject">actions/checkout</span>
-      <span class="proposal-version"><span class="from">v3</span><span class="arrow">→</span><span class="to">v4</span></span>
-      <span class="proposal-reason">Validation failed: workflow referenced removed input (gha:major-bump)</span></span>
-    <span class="proposal-tier tier-breaking">breaking</span><span class="proposal-duration">8.1 s</span><span class="proposal-chevron">▸</span></li>
-  <li class="cohort state-inprogress"><div class="cohort-header"><span class="cohort-icon"></span>
-    <span class="cohort-name">@angular/*</span><span class="cohort-members-summary">core, common, forms, router</span>
-    <span class="cohort-lockstep-tag">lockstep · 4</span></div>
-    <ol class="cohort-members">
-      <li class="proposal state-inprogress"><span class="proposal-icon"></span><span class="proposal-text"><span class="proposal-subject">@angular/core</span>
-        <span class="proposal-version"><span class="from">17.3.0</span><span class="arrow">→</span><span class="to">18.0.0</span></span></span>
-        <span class="proposal-tier tier-breaking">breaking</span><span class="proposal-duration"></span><span class="proposal-chevron">▸</span></li>
-      <li class="proposal state-inprogress"><span class="proposal-icon"></span><span class="proposal-text"><span class="proposal-subject">@angular/router</span>
-        <span class="proposal-version"><span class="from">17.3.0</span><span class="arrow">→</span><span class="to">18.0.0</span></span></span>
-        <span class="proposal-tier tier-breaking">breaking</span><span class="proposal-duration"></span><span class="proposal-chevron">▸</span></li>
-    </ol></li>`;
 
 const browser = await chromium.launch();
 const shots = [];
 
+async function newPage(scheme) {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 880 }, colorScheme: scheme });
+  await page.goto(base, { waitUntil: "load" });
+  await page.waitForFunction(() => customElements.get("ae-button") && customElements.get("ae-segmented") && customElements.get("ae-switch"));
+  await page.waitForTimeout(120);
+  return page;
+}
+
 async function shot(page, name) {
-  const file = path.join(outDir, name);
-  await page.screenshot({ path: file, fullPage: true });
+  await page.screenshot({ path: path.join(outDir, name), fullPage: false });
   shots.push(name);
 }
 
@@ -93,47 +75,172 @@ async function setTheme(page, theme, variant) {
     }
     if (variant) el.setAttribute("data-variant", variant);
   }, { theme, variant });
+  await page.waitForTimeout(220);
 }
 
-const THEMES = [
-  { name: "01-default-dark.png", theme: null, variant: "dark", scheme: "dark" },
-  { name: "02-default-light.png", theme: null, variant: "light", scheme: "light" },
-  { name: "03-cinnabar-lacquer.png", theme: "cinnabar", variant: "dark", scheme: "dark" },
-  { name: "04-source-control-dark.png", theme: "spectrum", variant: "source-control-dark", scheme: "dark" },
-  { name: "05-metro.png", theme: "metro", variant: null, scheme: "light" },
-  { name: "06-crucible.png", theme: "crucible", variant: null, scheme: "dark" },
-];
+// Fill the repo input (via the ae-input's event) and advance the wizard.
+async function driveWizard(page, toStep) {
+  await page.evaluate(() => {
+    const input = document.getElementById("repo-input");
+    if (input) {
+      input.value = "~/work/payments-api";
+      input.dispatchEvent(new CustomEvent("ae-input", { detail: { value: "~/work/payments-api" }, bubbles: true }));
+    }
+  });
+  await page.waitForTimeout(80);
+  for (let i = 0; i < toStep; i++) {
+    await page.click("#wiz-next");
+    await page.waitForTimeout(160);
+  }
+}
 
-for (const t of THEMES) {
-  const page = await browser.newPage({ viewport: { width: 980, height: 860 }, colorScheme: t.scheme });
-  await page.goto(base, { waitUntil: "load" });
-  await page.waitForFunction(() => customElements.get("ae-button") && customElements.get("ae-tag"));
-  // Inject the sample sweep + reveal the list.
-  await page.evaluate((html) => {
-    const list = document.getElementById("proposal-list");
-    const empty = document.getElementById("empty-state");
-    if (list) { list.innerHTML = html; list.hidden = false; }
-    if (empty) empty.style.display = "none";
+// Static run state — flip to the run phase and inject a representative sweep,
+// a result banner, and a root-cause cluster so the results design is captured.
+const SAMPLE_SWEEP = `
+  <li class="proposal state-success"><span class="proposal-icon"></span>
+    <span class="proposal-text"><span class="proposal-subject">react</span>
+      <span class="proposal-version"><span class="from">18.2.0</span><span class="arrow">→</span><span class="to">18.3.1</span></span>
+      <span class="proposal-reason">Validated — CI passed, no regression.</span></span>
+    <span class="proposal-tier tier-compatible">compatible</span><span class="proposal-duration">1.3 s</span><span class="proposal-chevron">▸</span></li>
+  <li class="cohort state-success"><div class="cohort-header"><span class="cohort-icon"></span>
+    <span class="cohort-name">serde · serde_derive</span><span class="cohort-members-summary">serde, serde_derive</span>
+    <span class="cohort-lockstep-tag">lockstep · 2</span></div>
+    <ol class="cohort-members">
+      <li class="proposal state-success"><span class="proposal-icon"></span><span class="proposal-text"><span class="proposal-subject">serde</span>
+        <span class="proposal-version"><span class="from">1.0.197</span><span class="arrow">→</span><span class="to">1.0.203</span></span></span>
+        <span class="proposal-tier tier-compatible">compatible</span><span class="proposal-duration">2.4 s</span><span class="proposal-chevron">▸</span></li>
+      <li class="proposal state-success"><span class="proposal-icon"></span><span class="proposal-text"><span class="proposal-subject">serde_derive</span>
+        <span class="proposal-version"><span class="from">1.0.197</span><span class="arrow">→</span><span class="to">1.0.203</span></span></span>
+        <span class="proposal-tier tier-compatible">compatible</span><span class="proposal-duration">2.4 s</span><span class="proposal-chevron">▸</span></li>
+    </ol></li>
+  <li class="proposal state-failure"><span class="proposal-icon"></span>
+    <span class="proposal-text"><span class="proposal-subject">eslint</span>
+      <span class="proposal-version"><span class="from">8.57.0</span><span class="arrow">→</span><span class="to">9.3.0</span></span>
+      <span class="proposal-reason">Flat config required: .eslintrc.json no longer loaded</span></span>
+    <span class="proposal-tier tier-breaking">breaking</span><span class="proposal-duration">2.6 s</span><span class="proposal-chevron">▸</span></li>
+  <li class="proposal state-failure"><span class="proposal-icon"></span>
+    <span class="proposal-text"><span class="proposal-subject">reqwest</span>
+      <span class="proposal-version"><span class="from">0.11.24</span><span class="arrow">→</span><span class="to">0.12.4</span></span>
+      <span class="proposal-reason">API break: depends on http 1.0; downstream types changed</span></span>
+    <span class="proposal-tier tier-breaking">breaking</span><span class="proposal-duration">3.1 s</span><span class="proposal-chevron">▸</span></li>`;
+
+const RESULT_BANNER = `
+  <div class="result-banner bad" role="status">
+    <span class="rb-ico">⚠</span>
+    <div><div class="rb-title">2 of 5 upgrades need attention</div>
+      <div class="rb-sub"><b>3 passed</b> and are safe to apply. The 2 failures are grouped by cause below.</div></div>
+    <div class="rb-actions"><ae-button variant="primary" size="sm">Apply 3 passing →</ae-button></div>
+  </div>`;
+
+const CLUSTER = `
+  <li class="cluster"><div class="cluster-head">
+    <span class="cluster-count">2 proposals</span><span class="cluster-fp">fingerprint: config-schema-migration</span></div>
+    <div class="cluster-members">eslint, prettier</div>
+    <div class="cluster-rep"><div class="cluster-summary">Both upgrades fail because a config file uses an old schema the new major rejects.</div></div></li>`;
+
+async function showRunView(page) {
+  await page.evaluate(({ sweep, banner, cluster }) => {
+    document.getElementById("setup-view").hidden = true;
+    document.getElementById("run-view").hidden = false;
+    document.getElementById("step-indicator").hidden = true;
     const status = document.getElementById("run-status");
-    if (status) { status.textContent = "running"; status.setAttribute("tone", "accent"); }
-    const fb = document.getElementById("filterbar");
-    if (fb) fb.hidden = false;
-  }, SAMPLE_SWEEP);
-  await setTheme(page, t.theme, t.variant);
-  await page.waitForTimeout(250);
-  await shot(page, t.name);
+    status.textContent = "needs attention"; status.setAttribute("tone", "danger"); status.dataset.kind = "error";
+    document.getElementById("run-title").textContent = "Validation sweep";
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    set("count-discovered", "5 found"); set("count-validating", "0 validating"); set("count-passed", "3 passed"); set("count-failed", "2 failed");
+    const list = document.getElementById("proposal-list");
+    list.innerHTML = sweep; list.hidden = false;
+    document.getElementById("empty-state").style.display = "none";
+    document.getElementById("filterbar").hidden = false;
+    document.getElementById("result-banner-mount").innerHTML = banner;
+    const pb = document.getElementById("progressbar"); pb.dataset.done = "fail";
+    document.getElementById("progress-fill").style.width = "100%";
+    document.getElementById("validate-breaking").hidden = false;
+    document.getElementById("run-again").hidden = false;
+    const cl = document.getElementById("clusters"); cl.hidden = false;
+    document.getElementById("clusters-list").innerHTML = cluster;
+  }, { sweep: SAMPLE_SWEEP, banner: RESULT_BANNER, cluster: CLUSTER });
+  await page.waitForTimeout(160);
+}
+
+// 1. Wizard — Repository step (default dark)
+{
+  const page = await newPage("dark");
+  await setTheme(page, null, "dark");
+  await shot(page, "01-wizard-repository.png");
   await page.close();
 }
-
-// Settings drawer + theme picker (default brand).
+// 2. Wizard — Action step with progressive disclosure (default dark)
 {
-  const page = await browser.newPage({ viewport: { width: 980, height: 860 }, colorScheme: "dark" });
-  await page.goto(base, { waitUntil: "load" });
-  await page.waitForFunction(() => customElements.get("ae-drawer"));
+  const page = await newPage("dark");
+  await setTheme(page, null, "dark");
+  await driveWizard(page, 2);
+  await shot(page, "02-wizard-action.png");
+  await page.close();
+}
+// 3. Wizard — Review step (default dark)
+{
+  const page = await newPage("dark");
+  await setTheme(page, null, "dark");
+  await driveWizard(page, 3);
+  await shot(page, "03-wizard-review.png");
+  await page.close();
+}
+// 4. Run view — results with banner + cluster (default dark)
+{
+  const page = await newPage("dark");
+  await setTheme(page, null, "dark");
+  await showRunView(page);
+  await shot(page, "04-run-results.png");
+  await page.close();
+}
+// 5. Run view — default light
+{
+  const page = await newPage("light");
+  await setTheme(page, null, "light");
+  await showRunView(page);
+  await shot(page, "05-run-light.png");
+  await page.close();
+}
+// 6. Wizard Action — cinnabar
+{
+  const page = await newPage("dark");
+  await setTheme(page, "cinnabar", "dark");
+  await driveWizard(page, 2);
+  await shot(page, "06-cinnabar-action.png");
+  await page.close();
+}
+// 7. Run view — spectrum source-control-dark
+{
+  const page = await newPage("dark");
+  await setTheme(page, "spectrum", "source-control-dark");
+  await showRunView(page);
+  await shot(page, "07-source-control-dark-run.png");
+  await page.close();
+}
+// 8. Wizard Action — metro
+{
+  const page = await newPage("light");
+  await setTheme(page, "metro", null);
+  await driveWizard(page, 2);
+  await shot(page, "08-metro-action.png");
+  await page.close();
+}
+// 9. Run view — crucible
+{
+  const page = await newPage("dark");
+  await setTheme(page, "crucible", null);
+  await showRunView(page);
+  await shot(page, "09-crucible-run.png");
+  await page.close();
+}
+// 10. Settings drawer + theme picker
+{
+  const page = await newPage("dark");
   await setTheme(page, "cinnabar", "dark");
   await page.click("#settings-btn");
-  await page.waitForTimeout(450); // open transition
-  await shot(page, "07-settings-theme-picker.png");
+  await page.waitForTimeout(450);
+  await shot(page, "10-settings-theme-picker.png");
   await page.close();
 }
 

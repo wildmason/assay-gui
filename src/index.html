@@ -13,20 +13,21 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <span class="logo">⟁</span>
+    <div class="brand" id="brand" title="assay">
+      <span class="logo" aria-hidden="true">⟁</span>
       <span class="brand-name">assay</span>
-      <span class="brand-sub">dependency upgrade impact analyzer</span>
+      <span class="brand-sub">dependency upgrade safety</span>
     </div>
-    <div class="topbar-actions">
-      <ae-tag id="run-status" class="run-status" tone="neutral" variant="soft" size="sm">idle</ae-tag>
-      <ae-button id="theme-toggle" class="icon-btn" variant="ghost" size="sm" title="Toggle light / dark" aria-label="Toggle light / dark">
-        <span id="theme-icon" aria-hidden="true">☾</span>
-      </ae-button>
-      <ae-button id="settings-btn" class="icon-btn" variant="ghost" size="sm" title="Settings" aria-label="Settings">
-        <span aria-hidden="true">⚙</span>
-      </ae-button>
-    </div>
+    <div class="topbar-spacer"></div>
+    <!-- Setup-phase step indicator ("Step 2 of 4"); hidden during a run. -->
+    <span id="step-indicator" class="step-indicator" hidden></span>
+    <ae-tag id="run-status" class="run-status" tone="neutral" variant="soft" size="sm">ready</ae-tag>
+    <ae-button id="theme-toggle" class="icon-btn" variant="ghost" size="sm" title="Toggle light / dark" aria-label="Toggle light / dark">
+      <span id="theme-icon" aria-hidden="true">☾</span>
+    </ae-button>
+    <ae-button id="settings-btn" class="icon-btn" variant="ghost" size="sm" title="Settings" aria-label="Settings">
+      <span aria-hidden="true">⚙</span>
+    </ae-button>
   </header>
 
   <!-- Banner surfaces stderr when assay exits non-zero before any NDJSON. -->
@@ -43,87 +44,65 @@
   </ae-alert>
 
   <main class="main">
-    <!-- Recent repos render here when not in an active run and the list is non-empty. -->
-    <ae-card id="recents" class="recents" hidden>
-      <header class="recents-header">
-        <h2>Recent repositories</h2>
-        <ae-button id="recents-clear" variant="ghost" size="sm">clear</ae-button>
-      </header>
-      <ul id="recents-list" class="recents-list"></ul>
-    </ae-card>
-
-    <section class="controls">
-      <div class="control-row">
-        <label class="ctl" for="repo">Repository</label>
-        <div class="repo-pick">
-          <ae-input id="repo" class="repo-input" placeholder="C:\path\to\repo (or click Browse)" spellcheck="false"></ae-input>
-          <ae-button id="browse" variant="secondary">Browse…</ae-button>
+    <!-- ============================ SETUP PHASE ============================ -->
+    <!-- The guided wizard: Repository → Scope → Action → Review.
+         The rail, the active step body, and the footer button state are all
+         rendered imperatively by main.js from the live config. -->
+    <section id="setup-view" class="wizard" aria-label="Set up an analysis">
+      <nav id="wizard-rail" class="wizard-rail" aria-label="Setup steps"></nav>
+      <div class="wizard-main">
+        <div id="wizard-content" class="wizard-content scroll"></div>
+        <div class="wizard-footer">
+          <ae-button id="wiz-back" variant="tertiary" disabled>← Back</ae-button>
+          <span class="grow"></span>
+          <ae-button id="wiz-next" variant="primary" size="lg">Continue →</ae-button>
         </div>
-      </div>
-
-      <div class="control-row two-col">
-        <div>
-          <label class="ctl" for="ecosystem">Ecosystem</label>
-          <ae-select id="ecosystem" value="all">
-            <ae-option value="all">all</ae-option>
-            <ae-option value="cargo">cargo</ae-option>
-            <ae-option value="github-actions">github-actions</ae-option>
-            <ae-option value="npm">npm</ae-option>
-          </ae-select>
-        </div>
-        <div>
-          <label class="ctl" for="mode">Mode</label>
-          <ae-select id="mode" value="dry-run">
-            <ae-option value="dry-run">dry-run (report only)</ae-option>
-            <ae-option value="validate">validate (run real CI; no commit)</ae-option>
-            <ae-option value="apply-local">apply-local (commit greens to current branch)</ae-option>
-            <ae-option value="apply-pr">apply-pr (branch + push + open PR)</ae-option>
-          </ae-select>
-        </div>
-      </div>
-
-      <div class="control-row two-col">
-        <ae-checkbox id="fail-fast">fail-fast</ae-checkbox>
-        <span class="settings-hint">More options under <button id="open-settings-inline" class="link-btn" type="button">Settings ⚙</button></span>
-      </div>
-
-      <div class="control-row buttons-row">
-        <ae-button id="start" variant="primary">Start analysis</ae-button>
-        <ae-button id="run-again" variant="secondary" hidden>Run again</ae-button>
-        <span id="cli-preview" class="cli-preview"></span>
       </div>
     </section>
 
-    <section class="progress">
-      <header class="progress-header">
-        <h2>Sweep progress</h2>
+    <!-- ============================ RUN PHASE ============================== -->
+    <section id="run-view" class="run" aria-label="Analysis results" hidden>
+      <div class="run-head">
+        <h2 id="run-title">Validation sweep</h2>
         <div class="counts">
-          <ae-tag id="count-discovered" class="count" tone="neutral" variant="soft" size="sm" title="Total proposals discovered">0 discovered</ae-tag>
-          <ae-tag id="count-validating" class="count" tone="info" variant="soft" size="sm" title="Currently validating">0 validating</ae-tag>
+          <ae-tag id="count-discovered" class="count" tone="info" variant="soft" size="sm" title="Total proposals discovered">0 found</ae-tag>
+          <ae-tag id="count-validating" class="count" tone="accent" variant="soft" size="sm" title="Currently validating">0 validating</ae-tag>
           <ae-tag id="count-passed" class="count" tone="success" variant="soft" size="sm" title="Passed">0 passed</ae-tag>
           <ae-tag id="count-failed" class="count" tone="danger" variant="soft" size="sm" title="Failed">0 failed</ae-tag>
         </div>
-        <ae-button id="validate-breaking" variant="secondary" size="sm" hidden>Validate breaking upgrades</ae-button>
-      </header>
+        <div class="run-actions">
+          <ae-button id="validate-breaking" variant="secondary" size="sm" hidden>⚡ Validate breaking</ae-button>
+          <ae-button id="run-again" variant="secondary" size="sm" hidden>↻ Run again</ae-button>
+          <ae-button id="new-analysis" variant="ghost" size="sm">New analysis</ae-button>
+        </div>
+      </div>
+
+      <!-- Determinate sweep progress (settled / total). role=progressbar. -->
+      <div id="progressbar" class="progressbar" role="progressbar" aria-label="Sweep progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <span id="progress-fill" class="progress-fill"></span>
+      </div>
+
+      <!-- Result banner (ok / bad) injected here on run_completed. -->
+      <div id="result-banner-mount" aria-live="polite"></div>
 
       <!-- Filters + search. Hidden until a run has surfaced proposals. -->
       <div id="filterbar" class="filterbar" hidden>
-        <ae-segmented id="status-filter" value="all" aria-label="Status filter">
+        <ae-segmented id="status-filter" value="all" aria-label="Filter proposals">
           <ae-segmented-item value="all">All</ae-segmented-item>
           <ae-segmented-item value="tier:compatible">Compatible</ae-segmented-item>
           <ae-segmented-item value="tier:breaking">Breaking</ae-segmented-item>
-          <ae-segmented-item value="tier:lockfile-only">LockfileOnly</ae-segmented-item>
+          <ae-segmented-item value="tier:lockfile-only">Lockfile</ae-segmented-item>
           <ae-segmented-item value="state:success">Passed</ae-segmented-item>
           <ae-segmented-item value="state:failure">Failed</ae-segmented-item>
         </ae-segmented>
-        <ae-input id="search" class="search" type="search" clearable placeholder="Filter by subject…" spellcheck="false">
+        <ae-input id="search" class="search" type="search" clearable placeholder="filter by name…" spellcheck="false">
           <span slot="start" aria-hidden="true">⌕</span>
         </ae-input>
       </div>
 
       <ae-empty-state id="empty-state" class="empty-state">
         <span slot="title">No run yet</span>
-        <p>Pick a repo above and click <strong>Start analysis</strong>.</p>
+        <p>Start an analysis from the setup wizard.</p>
       </ae-empty-state>
       <ol id="proposal-list" class="proposal-list" hidden></ol>
 
@@ -131,45 +110,47 @@
       <section id="clusters" class="clusters" hidden>
         <header class="clusters-header">
           <h3>Root-cause clusters</h3>
-          <span class="clusters-sub">grouped by shared failure fingerprint</span>
+          <span class="clusters-sub">Failures grouped by shared fingerprint — fix the cause once, not each package.</span>
         </header>
         <ul id="clusters-list" class="clusters-list"></ul>
       </section>
     </section>
   </main>
 
-  <footer class="footer">
-    <span class="footer-cli">backed by <code>assay analyze --format ndjson</code></span>
-    <span id="footer-tail" class="footer-tail"></span>
-  </footer>
-
-  <!-- Settings panel: Aegis side drawer. Persisted via tauri-plugin-store. -->
+  <!-- Settings panel: Aegis side drawer. Persisted via tauri-plugin-store.
+       Run-specific options (ecosystem, action, sandbox, workers) live in the
+       wizard so they're reviewed before every run; this drawer holds the
+       leftover behaviour flags + appearance. -->
   <ae-drawer id="settings-overlay" class="settings-drawer" placement="end" size="md">
     <div slot="header" class="drawer-head">
       <h2>Settings</h2>
       <ae-button id="settings-close" class="icon-btn" variant="ghost" size="sm" aria-label="close">×</ae-button>
     </div>
 
-    <ae-radio-group id="executor-group" class="field-group" label="Executor" value="docker">
-      <ae-radio value="docker">Docker (sandboxed; default)</ae-radio>
-      <ae-radio value="host">Host (faster; no sandbox)</ae-radio>
-    </ae-radio-group>
-    <p class="field-help">Used by the validator stage. Ignored in dry-run mode.</p>
-
     <fieldset class="field-group">
-      <legend>Worker threads</legend>
-      <ae-input id="settings-threads" type="number" min="1" max="64" value="4"></ae-input>
-      <p class="field-help">Workers running the apply+validate pipeline. Default: 4.</p>
-    </fieldset>
-
-    <fieldset class="field-group">
-      <legend>Behavior</legend>
-      <ae-checkbox id="settings-member-gate">member-gate (skip workflows targeting only non-affected workspace members)</ae-checkbox>
-      <ae-checkbox id="settings-no-sha-pin">Skip SHA-pin hardening proposals</ae-checkbox>
+      <legend>Advanced behaviour</legend>
+      <ae-checkbox id="settings-member-gate">Member-gate — skip gate workflows that target only non-affected workspace members</ae-checkbox>
+      <ae-checkbox id="settings-no-sha-pin">Skip SHA-pin hardening — don't propose pinning GitHub Actions to commit SHAs</ae-checkbox>
+      <p class="field-help">Run-specific options — ecosystem, action, sandbox, workers — live in the setup steps so they're reviewed before every run.</p>
     </fieldset>
 
     <fieldset class="field-group">
       <legend>Appearance</legend>
+      <div class="field-row">
+        <label class="ctl" for="density">Density</label>
+        <ae-segmented id="density" value="regular" aria-label="Density">
+          <ae-segmented-item value="compact">Compact</ae-segmented-item>
+          <ae-segmented-item value="regular">Regular</ae-segmented-item>
+          <ae-segmented-item value="comfy">Comfy</ae-segmented-item>
+        </ae-segmented>
+      </div>
+      <div class="field-row">
+        <label class="ctl" for="rail-layout">Step rail</label>
+        <ae-segmented id="rail-layout" value="side" aria-label="Step rail layout">
+          <ae-segmented-item value="side">Side</ae-segmented-item>
+          <ae-segmented-item value="top">Top</ae-segmented-item>
+        </ae-segmented>
+      </div>
       <label class="ctl" for="theme-brand">Theme</label>
       <ae-select id="theme-brand" class="theme-brand"></ae-select>
       <div id="theme-variants" class="theme-variants" role="radiogroup" aria-label="Theme variant"></div>

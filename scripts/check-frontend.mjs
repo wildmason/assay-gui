@@ -1,11 +1,12 @@
 // Dependency-free smoke test for the assay-gui frontend.
 //
-// assay-gui ships raw HTML/JS with no bundler and no test runner, so the two
+// assay-gui ships raw HTML/JS with no bundler and no test runner, so the
 // failure modes that actually bite are (1) an element id referenced by main.js
-// that no longer exists in index.html (a rename breaks `els.foo` silently at
-// runtime), and (2) vendor drift — the Aegis bundle losing its self-contained
-// shape or the theme exports the picker depends on. This catches both with
-// plain node string checks. Run:  node scripts/check-frontend.mjs
+// via $("…") that exists neither in index.html nor in a main.js template (a
+// rename breaks `els.foo` silently at runtime), and (2) vendor drift — the
+// Aegis bundle losing its self-contained shape or the theme exports the picker
+// depends on. This catches both with plain node string checks.
+// Run:  node scripts/check-frontend.mjs
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -21,11 +22,16 @@ const js = await readFile(path.join(root, "src", "main.js"), "utf8");
 const css = await readFile(path.join(root, "src", "vendor", "aegis", "aegis.css"), "utf8");
 const bundle = await readFile(path.join(root, "src", "vendor", "aegis", "aegis.js"), "utf8");
 
-// 1. Every id main.js looks up via $("…") must exist in index.html.
+// 1. Every id main.js looks up via $("…") must exist somewhere it can be found
+//    at runtime: either declared in index.html, or created by a main.js
+//    template string (id="…"). The wizard renders its step bodies imperatively,
+//    so several refs (repo-input, cmd-box, banner-apply, …) are the latter.
 const htmlIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+const jsTemplateIds = new Set([...js.matchAll(/\bid="([a-zA-Z0-9_-]+)"/g)].map((m) => m[1]));
+const known = new Set([...htmlIds, ...jsTemplateIds]);
 const referenced = new Set([...js.matchAll(/\$\("([^"]+)"\)/g)].map((m) => m[1]));
 for (const id of referenced) {
-  check(htmlIds.has(id), `main.js references #${id} → present in index.html`);
+  check(known.has(id), `main.js references #${id} → resolvable (index.html or rendered)`);
 }
 
 // 2. The Aegis assets are loaded.
@@ -52,11 +58,30 @@ check(layerStmt !== -1, "aegis.css declares the @layer ae-base,ae-scheme,ae-bran
 check(layerStmt !== -1 && layerStmt < firstLayerBlock, "aegis.css declares layer order before the first layered block");
 check(css.indexOf("tokens.css (base") < css.indexOf("themes/"), "aegis.css concatenates tokens.css before the theme packs");
 
-// 5. The reskin actually uses ae-* elements (guards against a regression that
-//    reverts to native controls).
-for (const tag of ["ae-button", "ae-input", "ae-select", "ae-checkbox", "ae-radio-group", "ae-tag", "ae-drawer", "ae-alert", "ae-segmented"]) {
+// 5. The reskin uses ae-* elements (guards against reverting to native controls).
+//    Static markup in index.html:
+for (const tag of ["ae-button", "ae-input", "ae-select", "ae-checkbox", "ae-tag", "ae-drawer", "ae-alert", "ae-segmented", "ae-empty-state"]) {
   check(html.includes(`<${tag}`), `index.html uses <${tag}>`);
 }
+//    Wizard controls rendered by main.js:
+for (const tag of ["ae-switch", "ae-segmented", "ae-button", "ae-input"]) {
+  check(js.includes(`<${tag}`), `main.js renders <${tag}>`);
+}
+
+// 6. The two-phase shell is present (wizard + run view) and wired.
+for (const id of ["setup-view", "run-view", "wizard-rail", "wizard-content", "wiz-back", "wiz-next", "result-banner-mount", "progressbar"]) {
+  check(htmlIds.has(id), `index.html defines #${id}`);
+}
+for (const fn of ["enterSetup", "enterRun", "renderWizard", "startRun", "buildStartArgs", "renderResultBanner"]) {
+  check(js.includes(`function ${fn}`), `main.js defines ${fn}()`);
+}
+
+// 7. action → mode mapping covers every assay mode, and only assay-supported
+//    flags are emitted (no invented --skip-tier).
+for (const flag of ["--validate", "--apply-local", "--apply-pr", "--only-breaking", "--executor", "--unsafe-host-validation", "--threads", "--fail-fast", "--member-gate", "--no-sha-pin-proposals"]) {
+  check(js.includes(flag), `buildCommandArgs can emit ${flag}`);
+}
+check(!js.includes('"--skip-tier"'), "no invented --skip-tier flag emitted (assay has none)");
 
 // --- report ---------------------------------------------------------------
 console.log(`\n  ✓ ${ok.length} checks passed`);
