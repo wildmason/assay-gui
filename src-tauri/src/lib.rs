@@ -277,7 +277,17 @@ fn build_cli_args(args: &StartArgs) -> Vec<String> {
         let exec = args.executor.to_ascii_lowercase();
         if exec == "host" || exec == "docker" {
             out.push("--executor".into());
-            out.push(exec);
+            out.push(exec.clone());
+        }
+        // `--executor host` runs newly-bumped build scripts directly on the
+        // host (no Docker sandbox). assay refuses host validation in a
+        // validating mode unless this explicit acknowledgment flag is also
+        // present — without it the run errors out with
+        // `--executor host requires --unsafe-host-validation`. We emit it
+        // whenever the host executor is selected for a validating run; Docker
+        // (the default) never needs it because it sandboxes build scripts.
+        if exec == "host" {
+            out.push("--unsafe-host-validation".into());
         }
     }
     if let Some(t) = args.threads {
@@ -470,6 +480,41 @@ mod tests {
         let cli = build_cli_args(&args);
         assert!(cli.contains(&"--executor".to_string()));
         assert!(cli.contains(&"docker".to_string()));
+    }
+
+    #[test]
+    fn build_cli_args_host_validate_adds_unsafe_flag() {
+        // `--executor host` in a validating mode requires the explicit
+        // `--unsafe-host-validation` acknowledgment, or assay refuses the run
+        // (`--executor host requires --unsafe-host-validation`).
+        let mut args = base_args();
+        args.mode = "validate".into();
+        args.executor = "host".into();
+        let cli = build_cli_args(&args);
+        assert!(cli.contains(&"--executor".to_string()));
+        assert!(cli.contains(&"host".to_string()));
+        assert!(cli.contains(&"--unsafe-host-validation".to_string()));
+    }
+
+    #[test]
+    fn build_cli_args_docker_validate_no_unsafe_flag() {
+        // Docker sandboxes build scripts, so the unsafe ack flag is never added.
+        let mut args = base_args();
+        args.mode = "validate".into();
+        args.executor = "docker".into();
+        assert!(!build_cli_args(&args).contains(&"--unsafe-host-validation".to_string()));
+    }
+
+    #[test]
+    fn build_cli_args_host_dry_run_no_unsafe_flag() {
+        // Dry-run never runs the validator, so neither --executor nor the
+        // unsafe ack flag is emitted even when host is selected.
+        let mut args = base_args();
+        args.mode = "dry-run".into();
+        args.executor = "host".into();
+        let cli = build_cli_args(&args);
+        assert!(!cli.contains(&"--executor".to_string()));
+        assert!(!cli.contains(&"--unsafe-host-validation".to_string()));
     }
 
     #[test]
