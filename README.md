@@ -4,7 +4,37 @@ Tauri desktop utility that wraps the [`assay`](https://crates.io/crates/dep-assa
 
 **Architecture:** a small Tauri 2 shell. The Rust backend spawns `assay analyze --format ndjson <flags>` as a child process, parses each NDJSON event line, and forwards a typed event to the WebView. The vanilla-JS frontend listens on those events and updates per-proposal rows from `pending` → `in_progress` → `complete` (green check / red x) as each event arrives. Cohort groups render with a containing affordance so multi-member cohorts (`@angular/*`, `@tiptap/*`, `tokio + tokio-util`, etc.) are visually one unit being evaluated together.
 
-No frontend framework — plain HTML + CSS + JS. Small footprint by design. The whole production build is a single ~10MB Tauri binary.
+No frontend framework and no bundler — plain HTML + CSS + JS served directly. The
+UI is built from [Aegis v2](https://github.com/wildmason/aegis-unified) `ae-*` web
+components (buttons, inputs, selects, checkboxes, radios, tags, the settings
+drawer, the alert banner, toasts) styled by Aegis's `--ae-*` design tokens, with a
+built-in **theme picker** (Settings › Appearance) that re-skins the whole UI across
+every Aegis brand × variant at runtime. Small footprint by design — the whole
+production build is a single ~11 MB Tauri binary.
+
+## Theming
+
+The entire UI wears any Aegis v2 brand — neutral **Aegis** (follows your OS
+light / dark / high-contrast), **Cinnabar**, **Editorial**, **Metro**, **Crucible**,
+or any of the 12 **Spectrum** palettes (incl. the GitHub-flavored *Source Control
+Dark*). Pick one live from **Settings › Appearance**; the header ☀/☾ button is a
+quick light↔dark flip for the current brand. Your choice persists via
+`tauri-plugin-store`.
+
+Aegis ships as `ae-*` Lit elements that externalize `lit`, which a bundler-free
+app can't load directly, so the design system is **vendored** into
+`src/vendor/aegis/` as a self-contained ESM bundle (lit inlined via esbuild) plus
+a concatenated token + theme stylesheet. Regenerate after upgrading the sibling
+`aegis-v2` checkout:
+
+```sh
+node scripts/vendor-aegis.mjs            # assumes ../../aegis-v2
+node scripts/vendor-aegis.mjs <path>     # explicit aegis-v2 root
+```
+
+`scripts/check-frontend.mjs` is a dependency-free smoke test (element-id wiring +
+vendor integrity); `scripts/screenshot-frontend.mjs` renders the UI across themes
+with Playwright for visual QA.
 
 ## Requirements
 

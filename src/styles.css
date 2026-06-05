@@ -1,65 +1,50 @@
-/* assay-gui styles. Light/dark via [data-theme]; defaults to
- * prefers-color-scheme. Tokens are CSS custom properties — when
- * we set data-theme=light on <html>, the .light-theme block
- * below overrides every token at once. */
+/* assay-gui styles — reskinned onto Aegis v2.
+ *
+ * The bespoke palette is gone. Every color the app paints now derives from an
+ * Aegis v2 semantic token (`--ae-color-*`), routed through a thin app-vocabulary
+ * alias layer below. Because the in-app theme picker swaps the active brand /
+ * variant by setting `data-theme` × `data-variant` on <html> (which re-points
+ * the `--ae-*` cascade), the entire UI — including the dense proposal sweep list
+ * that no generic component models — restyles live across all 24 brand × variant
+ * looks. The interactive affordances (buttons, inputs, selects, checkboxes,
+ * radios, tags, the settings drawer, the alert banner, toasts) are real `ae-*`
+ * custom elements and carry their own shadow styling; this file only owns
+ * layout + the bespoke sweep visualization. */
 
 :root {
-  color-scheme: dark;
-  --bg: #0f1115;
-  --bg-elev-1: #15181f;
-  --bg-elev-2: #1c2029;
-  --bg-elev-3: #232733;
-  --border: #2a2f3a;
-  --border-strong: #3a4151;
-  --text: #e6e8ee;
-  --text-dim: #9aa0ac;
-  --text-faint: #6b7080;
-  --accent: #f26b43;
-  --accent-strong: #ff8458;
-  --accent-soft: rgba(242, 107, 67, 0.16);
-  --green: #59c08e;
-  --green-soft: rgba(89, 192, 142, 0.16);
-  --red: #e25864;
-  --red-soft: rgba(226, 88, 100, 0.16);
-  --yellow: #d9b558;
-  --yellow-soft: rgba(217, 181, 88, 0.16);
-  --blue: #5fa6e0;
-  --blue-soft: rgba(95, 166, 224, 0.16);
-  --shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Geist", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: ui-monospace, "Geist Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
-}
+  /* App design vocabulary → Aegis v2 tokens. No raw colors live here; every
+   * alias resolves (lazily, at use site) to whatever the active theme defines,
+   * so the theme picker updates all of it at once. The *-soft tints are
+   * synthesized with color-mix so they adapt per theme instead of being frozen
+   * rgba() values. */
+  --bg:            var(--ae-color-bg);
+  --bg-elev-1:     var(--ae-color-bg-subtle);
+  --bg-elev-2:     var(--ae-color-bg-muted);
+  --bg-elev-3:     var(--ae-color-bg-muted);
+  --border:        var(--ae-color-border);
+  --border-strong: var(--ae-color-border-strong);
+  --text:          var(--ae-color-fg);
+  --text-dim:      var(--ae-color-fg-muted);
+  --text-faint:    var(--ae-color-fg-subtle);
 
-/* Manual light-theme override. Triggered by [data-theme="light"]
- * on <html>. We don't rely on @media (prefers-color-scheme:
- * light) directly because we want the user's explicit toggle to
- * win over the OS preference. The toggle code reads the OS pref
- * once at startup and writes the appropriate data-theme. */
-html[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f6f7fa;
-  --bg-elev-1: #ffffff;
-  --bg-elev-2: #f0f2f6;
-  --bg-elev-3: #e6e9ef;
-  --border: #d8dce4;
-  --border-strong: #c0c6d0;
-  --text: #1a1d23;
-  --text-dim: #5a6068;
-  --text-faint: #8a9099;
-  --accent: #d4451d;
-  --accent-strong: #b8391a;
-  --accent-soft: rgba(212, 69, 29, 0.12);
-  --green: #2f9c66;
-  --green-soft: rgba(47, 156, 102, 0.12);
-  --red: #c93849;
-  --red-soft: rgba(201, 56, 73, 0.12);
-  --yellow: #b88f1f;
-  --yellow-soft: rgba(184, 143, 31, 0.14);
-  --blue: #2e7bb8;
-  --blue-soft: rgba(46, 123, 184, 0.12);
-  --shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 8px 32px rgba(20, 30, 50, 0.15);
+  --accent:        var(--ae-color-accent);
+  --accent-strong: var(--ae-color-accent-hover);
+  --accent-soft:   color-mix(in oklch, var(--ae-color-accent) 16%, transparent);
+  --green:         var(--ae-color-success);
+  --green-soft:    color-mix(in oklch, var(--ae-color-success) 16%, transparent);
+  --red:           var(--ae-color-danger);
+  --red-soft:      color-mix(in oklch, var(--ae-color-danger) 16%, transparent);
+  --yellow:        var(--ae-color-warning);
+  --yellow-soft:   color-mix(in oklch, var(--ae-color-warning) 20%, transparent);
+  --blue:          var(--ae-color-info);
+  --blue-soft:     color-mix(in oklch, var(--ae-color-info) 16%, transparent);
+
+  --fg-on-success: var(--ae-color-fg-on-success);
+  --fg-on-danger:  var(--ae-color-fg-on-danger);
+
+  --shadow-lg:     var(--ae-shadow-lg);
+  --font-ui:       var(--ae-font-family-sans);
+  --font-mono:     var(--ae-font-family-mono);
 }
 
 * { box-sizing: border-box; }
@@ -79,18 +64,12 @@ body {
   flex-direction: column;
 }
 
-/* The HTML `hidden` attribute relies on the UA stylesheet's
- * `[hidden] { display: none }`, which has lower specificity than
- * class-based `display: flex/grid/block` rules below. Without this
- * override the settings overlay (and any other element toggled via
- * `el.hidden = true/false` whose class also sets `display:`) is
- * permanently visible — that was the 0.2.0 settings-trap bug. The
- * `!important` is justified: `hidden` means hidden, period; no
- * class-based layout should ever beat it.
- */
+/* `hidden` means hidden, period — beat any class-based display rule. */
 [hidden] {
   display: none !important;
 }
+
+/* ---- Topbar -------------------------------------------------------------- */
 
 .topbar {
   display: flex;
@@ -123,63 +102,24 @@ body {
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-elev-2);
-  color: var(--text-dim);
-  font-size: 14px;
-  cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
-}
-.icon-btn:hover { background: var(--bg-elev-3); color: var(--text); border-color: var(--border-strong); }
-
-.pill {
-  font-size: 11px;
+/* run-status is an <ae-tag>; give it the mono, uppercase ticket feel. */
+.run-status::part(tag) {
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
 }
-.pill-idle { color: var(--text-dim); }
-.pill-running { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
-.pill-done { color: var(--green); border-color: var(--green); background: var(--green-soft); }
-.pill-error { color: var(--red); border-color: var(--red); background: var(--red-soft); }
+
+/* ---- Error banner (ae-alert) -------------------------------------------- */
 
 .error-banner {
+  display: block;
   margin: 10px 16px 0;
-  border: 1px solid var(--red);
-  border-radius: 6px;
-  background: var(--red-soft);
-  color: var(--text);
-  font-size: 12px;
-}
-.error-banner-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--red);
-  background: rgba(0, 0, 0, 0.04);
-}
-.error-banner-title {
-  font-weight: 600;
-  color: var(--red);
-  margin-right: auto;
 }
 .error-banner-body {
-  margin: 0;
-  padding: 10px 12px;
+  margin: 6px 0 0;
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--text);
@@ -188,6 +128,8 @@ body {
   max-height: 200px;
   overflow: auto;
 }
+
+/* ---- Main layout --------------------------------------------------------- */
 
 .main {
   flex: 1;
@@ -198,10 +140,12 @@ body {
   gap: 14px;
 }
 
+/* ---- Recents (ae-card) --------------------------------------------------- */
+
 .recents {
-  background: var(--bg-elev-1);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  display: block;
+}
+.recents::part(card) {
   padding: 10px 14px 12px;
 }
 .recents-header {
@@ -231,7 +175,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 4px;
+  border-radius: var(--ae-radius-sm);
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -269,10 +213,12 @@ body {
 .recent-item:hover .recent-remove { opacity: 1; }
 .recent-item .recent-remove:hover { color: var(--red); }
 
+/* ---- Controls ------------------------------------------------------------ */
+
 .controls {
   background: var(--bg-elev-1);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ae-radius-md);
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -309,49 +255,18 @@ body {
   font-size: 11.5px;
 }
 
-input[type="text"], input[type="number"], input[type="search"], select {
-  width: 100%;
-  padding: 7px 10px;
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-family: var(--font-ui);
-  font-size: 13px;
-}
-input:focus, select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
-
+/* Repo picker: ae-input fills, ae-button hugs. */
 .repo-pick {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
+  align-items: center;
 }
+.repo-input { width: 100%; }
 
-.btn {
-  padding: 7px 14px;
-  border-radius: 4px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-elev-2);
-  color: var(--text);
-  font-family: var(--font-ui);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
-}
-.btn:hover { background: var(--bg-elev-3); }
-.btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #1a0d06;
-  font-weight: 600;
-}
-.btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
-.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; background: #6b3a27; border-color: #6b3a27; }
-.btn-secondary { background: var(--bg-elev-2); }
+/* ae-select / ae-input fill their grid cell. */
+.controls ae-select,
+.controls ae-input { width: 100%; }
 
 .link-btn {
   background: transparent;
@@ -369,18 +284,6 @@ input:focus, select:focus {
 }
 .link-btn:hover { color: var(--text); text-decoration-color: currentColor; }
 
-.check, .radio {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text);
-  font-size: 13px;
-  user-select: none;
-  cursor: pointer;
-  padding: 4px 0;
-}
-.check input, .radio input { accent-color: var(--accent); }
-
 .cli-preview {
   flex: 1 0 100%;
   margin-top: 4px;
@@ -391,10 +294,12 @@ input:focus, select:focus {
   word-break: break-all;
 }
 
+/* ---- Progress ------------------------------------------------------------ */
+
 .progress {
   background: var(--bg-elev-1);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ae-radius-md);
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -404,6 +309,8 @@ input:focus, select:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
 }
@@ -414,18 +321,8 @@ input:focus, select:focus {
   letter-spacing: 0.3px;
 }
 .counts { display: flex; gap: 8px; flex-wrap: wrap; }
-.count {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-}
-.count-discovered { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }
-.count-validating { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-.count-passed { border-color: var(--green); color: var(--green); background: var(--green-soft); }
-.count-failed { border-color: var(--red); color: var(--red); background: var(--red-soft); }
+/* counts are <ae-tag>s — mono for the numeric ticker feel. */
+.count::part(tag) { font-family: var(--font-mono); }
 
 .filterbar {
   display: flex;
@@ -435,33 +332,19 @@ input:focus, select:focus {
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev-2);
 }
-.filter-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
-.chip {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  text-transform: lowercase;
-  letter-spacing: 0.2px;
-}
-.chip:hover { color: var(--text); border-color: var(--text-dim); }
-.chip-active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+#status-filter { flex: 0 1 auto; }
 .search {
   margin-left: auto;
-  max-width: 240px;
-  font-size: 12px;
+  width: 240px;
+  max-width: 40%;
 }
 
 .empty-state {
-  padding: 32px;
-  text-align: center;
-  color: var(--text-faint);
+  padding: 24px 32px;
 }
 .empty-state p { margin: 0; }
+
+/* ---- Proposal sweep list (bespoke, Aegis-toned) -------------------------- */
 
 .proposal-list {
   list-style: none;
@@ -480,7 +363,7 @@ input:focus, select:focus {
   border-left: 3px solid transparent;
   cursor: pointer;
 }
-.proposal:hover { background: rgba(127, 127, 127, 0.06); }
+.proposal:hover { background: var(--ae-color-hover-overlay); }
 .proposal.hidden-by-filter { display: none; }
 
 .proposal-icon {
@@ -503,13 +386,13 @@ input:focus, select:focus {
 }
 .state-inprogress .proposal-icon::before { content: "↻"; }
 .state-success .proposal-icon {
-  color: #0e3a23;
+  color: var(--fg-on-success);
   background: var(--green);
   border: 1px solid var(--green);
 }
 .state-success .proposal-icon::before { content: "✓"; }
 .state-failure .proposal-icon {
-  color: #3a0e15;
+  color: var(--fg-on-danger);
   background: var(--red);
   border: 1px solid var(--red);
 }
@@ -544,6 +427,22 @@ input:focus, select:focus {
 }
 .proposal-version .arrow { color: var(--text-faint); margin: 0 4px; }
 .proposal-version .to { color: var(--text); }
+.proposal-reason {
+  display: block;
+  margin-top: 3px;
+  max-width: 100%;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proposal:has(.tier-breaking) .proposal-reason,
+.state-failure .proposal-reason,
+.state-pending .proposal-reason {
+  color: var(--ae-color-danger-emphasis);
+}
 
 .proposal-tier {
   font-family: var(--font-mono);
@@ -551,13 +450,13 @@ input:focus, select:focus {
   text-transform: uppercase;
   letter-spacing: 0.4px;
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: var(--ae-radius-xs);
   border: 1px solid var(--border-strong);
   color: var(--text-dim);
 }
 .tier-lockfile-only { }
-.tier-compatible { color: var(--yellow); border-color: var(--yellow); background: var(--yellow-soft); }
-.tier-breaking { color: var(--red); border-color: var(--red); background: var(--red-soft); }
+.tier-compatible { color: var(--ae-color-warning-emphasis); border-color: var(--yellow); background: var(--yellow-soft); }
+.tier-breaking { color: var(--ae-color-danger-emphasis); border-color: var(--red); background: var(--red-soft); }
 
 .proposal-duration {
   font-family: var(--font-mono);
@@ -574,11 +473,7 @@ input:focus, select:focus {
 }
 .proposal.expanded .proposal-chevron { transform: rotate(90deg); }
 
-/* Expandable detail panel. CSS-only animation via max-height +
- * opacity. We deliberately animate max-height not height — the
- * inner content's height is unknown until it's measured, and
- * pinning a generous max-height (1200px) gives us a smooth open
- * for every realistic proposal payload. */
+/* Expandable detail panel — CSS-only max-height animation. */
 .proposal-detail {
   grid-column: 1 / -1;
   max-height: 0;
@@ -634,7 +529,7 @@ input:focus, select:focus {
   padding: 8px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ae-radius-sm);
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text);
@@ -657,7 +552,7 @@ input:focus, select:focus {
   gap: 8px;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ae-radius-sm);
   background: var(--bg-elev-2);
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -667,7 +562,7 @@ input:focus, select:focus {
   padding: 1px 6px;
   border-radius: 3px;
   background: var(--red-soft);
-  color: var(--red);
+  color: var(--ae-color-danger-emphasis);
   border: 1px solid var(--red);
   font-size: 10px;
   text-transform: uppercase;
@@ -687,18 +582,35 @@ input:focus, select:focus {
 }
 .findings-summary .rule { color: var(--text-faint); font-family: var(--font-mono); font-size: 10.5px; }
 
+.classifier-section .classifier-summary {
+  border-left-color: var(--yellow);
+}
+.classifier-section.classifier-fallback .classifier-summary {
+  border-left-color: var(--border-strong);
+}
+.classifier-inputs {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+.classifier-decision {
+  margin: 6px 0 0;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
 .toggle-raw {
   margin-top: 6px;
 }
 
-/* Cohort grouping. Members render inside a container so multi-
- * member cohorts are unmistakably "one thing being evaluated
- * together". Single-member cohorts render flat in the list
- * (handled in JS — we don't emit a container for them). */
+/* ---- Cohort grouping ----------------------------------------------------- */
+
 .cohort {
   margin: 6px 14px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--ae-radius-md);
   background: var(--bg-elev-2);
   overflow: hidden;
 }
@@ -714,7 +626,7 @@ input:focus, select:focus {
   gap: 10px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
-  background: rgba(127, 127, 127, 0.04);
+  background: var(--ae-color-hover-overlay);
 }
 .cohort-icon {
   width: 18px;
@@ -725,7 +637,7 @@ input:focus, select:focus {
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 700;
-  border-radius: 4px;
+  border-radius: var(--ae-radius-sm);
   color: var(--text-faint);
   border: 1px solid var(--border-strong);
 }
@@ -733,13 +645,13 @@ input:focus, select:focus {
 .cohort.state-inprogress .cohort-icon::before { content: "↻"; }
 .cohort.state-pending .cohort-icon::before { content: "▣"; }
 .cohort.state-success .cohort-icon {
-  color: #0e3a23;
+  color: var(--fg-on-success);
   background: var(--green);
   border-color: var(--green);
 }
 .cohort.state-success .cohort-icon::before { content: "✓"; }
 .cohort.state-failure .cohort-icon {
-  color: #3a0e15;
+  color: var(--fg-on-danger);
   background: var(--red);
   border-color: var(--red);
 }
@@ -769,9 +681,9 @@ input:focus, select:focus {
   text-transform: uppercase;
   letter-spacing: 0.6px;
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: var(--ae-radius-xs);
   border: 1px solid var(--accent);
-  color: var(--accent);
+  color: var(--ae-color-accent-emphasis);
   background: var(--accent-soft);
   margin-left: auto;
 }
@@ -796,6 +708,8 @@ input:focus, select:focus {
 }
 .cohort-members .proposal:first-child::before { top: 50%; }
 .cohort-members .proposal:last-child::before { bottom: 50%; }
+
+/* ---- Root-cause clusters ------------------------------------------------- */
 
 .clusters {
   border-top: 1px solid var(--border);
@@ -831,7 +745,7 @@ input:focus, select:focus {
 .cluster {
   padding: 10px 12px;
   border: 1px solid var(--red);
-  border-radius: 5px;
+  border-radius: var(--ae-radius-md);
   background: var(--bg-elev-1);
 }
 .cluster-head {
@@ -848,10 +762,10 @@ input:focus, select:focus {
 .cluster-count {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--red);
+  color: var(--ae-color-danger-emphasis);
   border: 1px solid var(--red);
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--ae-radius-xs);
   background: var(--red-soft);
 }
 .cluster-members {
@@ -862,6 +776,8 @@ input:focus, select:focus {
   word-break: break-word;
 }
 .cluster-rep { margin-top: 6px; }
+
+/* ---- Footer -------------------------------------------------------------- */
 
 .footer {
   display: flex;
@@ -876,65 +792,41 @@ input:focus, select:focus {
 }
 .footer code { background: var(--bg); padding: 1px 6px; border-radius: 3px; border: 1px solid var(--border); }
 
-/* Settings drawer. CSS-only — opens by removing [hidden] and
- * relying on transform transition. */
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  justify-content: flex-end;
-  z-index: 100;
-}
-.drawer {
+/* ---- Settings drawer (ae-drawer) ----------------------------------------- */
+
+.settings-drawer::part(drawer) {
   width: 380px;
   max-width: 90vw;
-  height: 100%;
-  background: var(--bg-elev-1);
-  border-left: 1px solid var(--border);
-  box-shadow: var(--shadow-lg);
-  display: flex;
-  flex-direction: column;
-  animation: slideIn 0.18s ease;
-}
-@keyframes slideIn {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
 }
 .drawer-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
+  width: 100%;
 }
 .drawer-head h2 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
 }
-.drawer-body {
-  flex: 1;
-  overflow: auto;
-  padding: 14px 18px;
+.settings-drawer::part(body) {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 .drawer-foot {
-  padding: 12px 18px;
-  border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-end;
+  width: 100%;
 }
 .field-group {
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--ae-radius-md);
   padding: 10px 12px 12px;
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   background: var(--bg);
 }
 .field-group legend {
@@ -951,27 +843,55 @@ input:focus, select:focus {
   color: var(--text-faint);
   line-height: 1.4;
 }
-.field-group input[type="number"] {
-  max-width: 100px;
-}
+#settings-threads { max-width: 120px; }
 
-/* Toast for clipboard confirmation. */
-.toast {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--bg-elev-3);
-  color: var(--text);
-  padding: 8px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  box-shadow: var(--shadow-lg);
-  font-size: 12px;
-  z-index: 200;
-  animation: toastIn 0.2s ease;
+/* ---- Theme picker (in Appearance) ---------------------------------------- */
+
+.theme-brand { width: 100%; }
+.theme-variants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
 }
-@keyframes toastIn {
-  from { opacity: 0; transform: translate(-50%, 8px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+.theme-swatch {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 84px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--ae-radius-md);
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 0.1s, box-shadow 0.1s;
 }
+.theme-swatch:hover { border-color: var(--border-strong); }
+.theme-swatch:focus-visible {
+  outline: var(--ae-focus-ring-width) solid var(--ae-color-focus-ring);
+  outline-offset: 2px;
+}
+.theme-swatch[aria-checked="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.theme-swatch-preview {
+  height: 28px;
+  border-radius: var(--ae-radius-sm);
+  border: 1px solid var(--border);
+  /* bg / surface / accent stripes painted inline by JS from variant.swatch */
+  display: flex;
+  overflow: hidden;
+}
+.theme-swatch-preview span { flex: 1; }
+.theme-swatch-preview .sw-accent { flex: 0 0 14px; }
+.theme-swatch-label {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.theme-swatch[aria-checked="true"] .theme-swatch-label { color: var(--text); font-weight: 600; }

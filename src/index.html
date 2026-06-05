@@ -4,6 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>assay</title>
+  <!-- Aegis v2 design system: global tokens + every theme pack (drives the
+       in-app theme picker). Vendored — see src/vendor/aegis/VENDORED.md.
+       The ae-* custom elements are registered by main.js's import of
+       ./vendor/aegis/aegis.js. -->
+  <link rel="stylesheet" href="./vendor/aegis/aegis.css" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -14,77 +19,77 @@
       <span class="brand-sub">dependency upgrade impact analyzer</span>
     </div>
     <div class="topbar-actions">
-      <div id="run-status" class="run-status pill pill-idle">idle</div>
-      <button id="theme-toggle" class="icon-btn" type="button" title="Toggle theme" aria-label="Toggle theme">
-        <span id="theme-icon">☾</span>
-      </button>
-      <button id="settings-btn" class="icon-btn" type="button" title="Settings" aria-label="Settings">
+      <ae-tag id="run-status" class="run-status" tone="neutral" variant="soft" size="sm">idle</ae-tag>
+      <ae-button id="theme-toggle" class="icon-btn" variant="ghost" size="sm" title="Toggle light / dark" aria-label="Toggle light / dark">
+        <span id="theme-icon" aria-hidden="true">☾</span>
+      </ae-button>
+      <ae-button id="settings-btn" class="icon-btn" variant="ghost" size="sm" title="Settings" aria-label="Settings">
         <span aria-hidden="true">⚙</span>
-      </button>
+      </ae-button>
     </div>
   </header>
 
   <!-- Banner surfaces stderr when assay exits non-zero before any NDJSON. -->
-  <div id="error-banner" class="error-banner" hidden>
-    <div class="error-banner-head">
-      <span class="error-banner-title">assay exited with no progress output</span>
-      <button id="error-banner-copy" class="link-btn" type="button">copy</button>
-      <button id="error-banner-dismiss" class="link-btn" type="button" aria-label="dismiss">×</button>
-    </div>
+  <!-- Not `dismissible`: ae-alert's built-in dismiss removes itself from the
+       DOM, but this banner is reused across runs — so we own a non-destructive
+       dismiss button that just re-hides it. -->
+  <ae-alert id="error-banner" class="error-banner" tone="danger" variant="soft" hidden>
+    <span slot="title">assay exited with no progress output</span>
     <pre id="error-banner-body" class="error-banner-body"></pre>
-  </div>
+    <span slot="actions">
+      <ae-button id="error-banner-copy" variant="ghost" size="sm">copy</ae-button>
+      <ae-button id="error-banner-dismiss" variant="ghost" size="sm" aria-label="dismiss">×</ae-button>
+    </span>
+  </ae-alert>
 
   <main class="main">
     <!-- Recent repos render here when not in an active run and the list is non-empty. -->
-    <section id="recents" class="recents" hidden>
+    <ae-card id="recents" class="recents" hidden>
       <header class="recents-header">
         <h2>Recent repositories</h2>
-        <button id="recents-clear" class="link-btn" type="button">clear</button>
+        <ae-button id="recents-clear" variant="ghost" size="sm">clear</ae-button>
       </header>
       <ul id="recents-list" class="recents-list"></ul>
-    </section>
+    </ae-card>
 
     <section class="controls">
       <div class="control-row">
         <label class="ctl" for="repo">Repository</label>
         <div class="repo-pick">
-          <input id="repo" type="text" placeholder="C:\path\to\repo (or click Browse)" spellcheck="false" />
-          <button id="browse" class="btn btn-secondary" type="button">Browse…</button>
+          <ae-input id="repo" class="repo-input" placeholder="C:\path\to\repo (or click Browse)" spellcheck="false"></ae-input>
+          <ae-button id="browse" variant="secondary">Browse…</ae-button>
         </div>
       </div>
 
       <div class="control-row two-col">
         <div>
           <label class="ctl" for="ecosystem">Ecosystem</label>
-          <select id="ecosystem">
-            <option value="all" selected>all</option>
-            <option value="cargo">cargo</option>
-            <option value="github-actions">github-actions</option>
-            <option value="npm">npm</option>
-          </select>
+          <ae-select id="ecosystem" value="all">
+            <ae-option value="all">all</ae-option>
+            <ae-option value="cargo">cargo</ae-option>
+            <ae-option value="github-actions">github-actions</ae-option>
+            <ae-option value="npm">npm</ae-option>
+          </ae-select>
         </div>
         <div>
           <label class="ctl" for="mode">Mode</label>
-          <select id="mode">
-            <option value="dry-run" selected>dry-run (report only)</option>
-            <option value="validate">validate (run real CI; no commit)</option>
-            <option value="apply-local">apply-local (commit greens to current branch)</option>
-            <option value="apply-pr">apply-pr (branch + push + open PR)</option>
-          </select>
+          <ae-select id="mode" value="dry-run">
+            <ae-option value="dry-run">dry-run (report only)</ae-option>
+            <ae-option value="validate">validate (run real CI; no commit)</ae-option>
+            <ae-option value="apply-local">apply-local (commit greens to current branch)</ae-option>
+            <ae-option value="apply-pr">apply-pr (branch + push + open PR)</ae-option>
+          </ae-select>
         </div>
       </div>
 
       <div class="control-row two-col">
-        <label class="check">
-          <input id="fail-fast" type="checkbox" />
-          <span>fail-fast</span>
-        </label>
+        <ae-checkbox id="fail-fast">fail-fast</ae-checkbox>
         <span class="settings-hint">More options under <button id="open-settings-inline" class="link-btn" type="button">Settings ⚙</button></span>
       </div>
 
       <div class="control-row buttons-row">
-        <button id="start" class="btn btn-primary" type="button">Start analysis</button>
-        <button id="run-again" class="btn btn-secondary" type="button" hidden>Run again</button>
+        <ae-button id="start" variant="primary">Start analysis</ae-button>
+        <ae-button id="run-again" variant="secondary" hidden>Run again</ae-button>
         <span id="cli-preview" class="cli-preview"></span>
       </div>
     </section>
@@ -93,29 +98,33 @@
       <header class="progress-header">
         <h2>Sweep progress</h2>
         <div class="counts">
-          <span id="count-discovered" class="count count-discovered" title="Total proposals discovered">0 discovered</span>
-          <span id="count-validating" class="count count-validating" title="Currently validating">0 validating</span>
-          <span id="count-passed" class="count count-passed" title="Passed">0 passed</span>
-          <span id="count-failed" class="count count-failed" title="Failed">0 failed</span>
+          <ae-tag id="count-discovered" class="count" tone="neutral" variant="soft" size="sm" title="Total proposals discovered">0 discovered</ae-tag>
+          <ae-tag id="count-validating" class="count" tone="info" variant="soft" size="sm" title="Currently validating">0 validating</ae-tag>
+          <ae-tag id="count-passed" class="count" tone="success" variant="soft" size="sm" title="Passed">0 passed</ae-tag>
+          <ae-tag id="count-failed" class="count" tone="danger" variant="soft" size="sm" title="Failed">0 failed</ae-tag>
         </div>
+        <ae-button id="validate-breaking" variant="secondary" size="sm" hidden>Validate breaking upgrades</ae-button>
       </header>
 
       <!-- Filters + search. Hidden until a run has surfaced proposals. -->
       <div id="filterbar" class="filterbar" hidden>
-        <div class="filter-buttons" role="group" aria-label="Status filter">
-          <button class="chip chip-active" type="button" data-filter="all">All</button>
-          <button class="chip" type="button" data-filter="tier:compatible">Compatible</button>
-          <button class="chip" type="button" data-filter="tier:breaking">Breaking</button>
-          <button class="chip" type="button" data-filter="tier:lockfile-only">LockfileOnly</button>
-          <button class="chip" type="button" data-filter="state:success">Passed</button>
-          <button class="chip" type="button" data-filter="state:failure">Failed</button>
-        </div>
-        <input id="search" class="search" type="search" placeholder="Filter by subject…" spellcheck="false" />
+        <ae-segmented id="status-filter" value="all" aria-label="Status filter">
+          <ae-segmented-item value="all">All</ae-segmented-item>
+          <ae-segmented-item value="tier:compatible">Compatible</ae-segmented-item>
+          <ae-segmented-item value="tier:breaking">Breaking</ae-segmented-item>
+          <ae-segmented-item value="tier:lockfile-only">LockfileOnly</ae-segmented-item>
+          <ae-segmented-item value="state:success">Passed</ae-segmented-item>
+          <ae-segmented-item value="state:failure">Failed</ae-segmented-item>
+        </ae-segmented>
+        <ae-input id="search" class="search" type="search" clearable placeholder="Filter by subject…" spellcheck="false">
+          <span slot="start" aria-hidden="true">⌕</span>
+        </ae-input>
       </div>
 
-      <div id="empty-state" class="empty-state">
-        <p>No run yet. Pick a repo above and click <strong>Start analysis</strong>.</p>
-      </div>
+      <ae-empty-state id="empty-state" class="empty-state">
+        <span slot="title">No run yet</span>
+        <p>Pick a repo above and click <strong>Start analysis</strong>.</p>
+      </ae-empty-state>
       <ol id="proposal-list" class="proposal-list" hidden></ol>
 
       <!-- Root-cause clusters surface here when run_completed.failure_clusters is non-empty. -->
@@ -134,69 +143,44 @@
     <span id="footer-tail" class="footer-tail"></span>
   </footer>
 
-  <!-- Settings panel: side drawer. Persisted via tauri-plugin-store. -->
-  <div id="settings-overlay" class="overlay" hidden>
-    <div class="drawer">
-      <header class="drawer-head">
-        <h2>Settings</h2>
-        <button id="settings-close" class="icon-btn" type="button" aria-label="close">×</button>
-      </header>
-      <div class="drawer-body">
-        <fieldset class="field-group">
-          <legend>Executor</legend>
-          <label class="radio">
-            <input type="radio" name="executor" value="docker" checked />
-            <span>Docker (sandboxed; default)</span>
-          </label>
-          <label class="radio">
-            <input type="radio" name="executor" value="host" />
-            <span>Host (faster; no sandbox)</span>
-          </label>
-          <p class="field-help">Used by the validator stage. Ignored in dry-run mode.</p>
-        </fieldset>
-
-        <fieldset class="field-group">
-          <legend>Worker threads</legend>
-          <input id="settings-threads" type="number" min="1" max="64" value="4" />
-          <p class="field-help">Workers running the apply+validate pipeline. Default: 4.</p>
-        </fieldset>
-
-        <fieldset class="field-group">
-          <legend>Behavior</legend>
-          <label class="check">
-            <input id="settings-member-gate" type="checkbox" />
-            <span>member-gate (skip workflows targeting only non-affected workspace members)</span>
-          </label>
-          <label class="check">
-            <input id="settings-no-sha-pin" type="checkbox" />
-            <span>Skip SHA-pin hardening proposals</span>
-          </label>
-        </fieldset>
-
-        <fieldset class="field-group">
-          <legend>Appearance</legend>
-          <label class="radio">
-            <input type="radio" name="theme" value="system" checked />
-            <span>Follow system</span>
-          </label>
-          <label class="radio">
-            <input type="radio" name="theme" value="dark" />
-            <span>Dark</span>
-          </label>
-          <label class="radio">
-            <input type="radio" name="theme" value="light" />
-            <span>Light</span>
-          </label>
-        </fieldset>
-      </div>
-      <footer class="drawer-foot">
-        <button id="settings-save" class="btn btn-primary" type="button">Save</button>
-      </footer>
+  <!-- Settings panel: Aegis side drawer. Persisted via tauri-plugin-store. -->
+  <ae-drawer id="settings-overlay" class="settings-drawer" placement="end" size="md">
+    <div slot="header" class="drawer-head">
+      <h2>Settings</h2>
+      <ae-button id="settings-close" class="icon-btn" variant="ghost" size="sm" aria-label="close">×</ae-button>
     </div>
-  </div>
 
-  <!-- Lightweight toast for clipboard copies. -->
-  <div id="toast" class="toast" hidden></div>
+    <ae-radio-group id="executor-group" class="field-group" label="Executor" value="docker">
+      <ae-radio value="docker">Docker (sandboxed; default)</ae-radio>
+      <ae-radio value="host">Host (faster; no sandbox)</ae-radio>
+    </ae-radio-group>
+    <p class="field-help">Used by the validator stage. Ignored in dry-run mode.</p>
+
+    <fieldset class="field-group">
+      <legend>Worker threads</legend>
+      <ae-input id="settings-threads" type="number" min="1" max="64" value="4"></ae-input>
+      <p class="field-help">Workers running the apply+validate pipeline. Default: 4.</p>
+    </fieldset>
+
+    <fieldset class="field-group">
+      <legend>Behavior</legend>
+      <ae-checkbox id="settings-member-gate">member-gate (skip workflows targeting only non-affected workspace members)</ae-checkbox>
+      <ae-checkbox id="settings-no-sha-pin">Skip SHA-pin hardening proposals</ae-checkbox>
+    </fieldset>
+
+    <fieldset class="field-group">
+      <legend>Appearance</legend>
+      <label class="ctl" for="theme-brand">Theme</label>
+      <ae-select id="theme-brand" class="theme-brand"></ae-select>
+      <div id="theme-variants" class="theme-variants" role="radiogroup" aria-label="Theme variant"></div>
+      <p class="field-help">Switch the whole UI across any Aegis v2 brand. The neutral
+        <em>Aegis</em> theme follows your OS light / dark / contrast; named brands stay put.</p>
+    </fieldset>
+
+    <div slot="footer" class="drawer-foot">
+      <ae-button id="settings-save" variant="primary">Save</ae-button>
+    </div>
+  </ae-drawer>
 
   <script src="./main.js" type="module"></script>
 </body>

@@ -11,6 +11,13 @@ src-tauri/WixTools/
 # Frontend deps (none for vanilla, but future-proof)
 node_modules/
 
+# Vendored Aegis devtools sourcemap (large; the committed aegis.js + aegis.css
+# are the runtime deps — regenerate the map with scripts/vendor-aegis.mjs)
+src/vendor/aegis/aegis.js.map
+
+# Frontend visual-QA output (scripts/screenshot-frontend.mjs)
+screenshots/
+
 # OS
 .DS_Store
 Thumbs.db

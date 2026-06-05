@@ -26,6 +26,19 @@
 // absence. Their renderers run only when the fields are present
 // and non-empty.
 
+// Aegis v2 design system. The bare import registers every ae-* custom element
+// (and the global side effects); the named imports drive the in-app theme
+// picker. Vendored, self-contained (lit inlined) — see vendor/aegis/VENDORED.md.
+import "./vendor/aegis/aegis.js";
+import {
+  THEME_REGISTRY,
+  applyTheme as aeApplyTheme,
+  resolveEffectiveVariant,
+  getThemeBrand,
+  getThemeVariant,
+  toast as aeToast,
+} from "./vendor/aegis/aegis.js";
+
 const RECENTS_CAP = 8;
 const STORE_PATH = "assay-gui.json";
 const STORE_KEY_PREFS = "prefs";
@@ -112,11 +125,14 @@ const els = {
   themeToggle: $("theme-toggle"),
   themeIcon: $("theme-icon"),
   settingsBtn: $("settings-btn"),
-  // Error banner
+  // Error banner (ae-alert)
   errorBanner: $("error-banner"),
   errorBannerBody: $("error-banner-body"),
   errorBannerCopy: $("error-banner-copy"),
   errorBannerDismiss: $("error-banner-dismiss"),
+  // Theme picker
+  themeBrand: $("theme-brand"),
+  themeVariants: $("theme-variants"),
   // Recents
   recents: $("recents"),
   recentsList: $("recents-list"),
@@ -138,6 +154,7 @@ const els = {
   countValidating: $("count-validating"),
   countPassed: $("count-passed"),
   countFailed: $("count-failed"),
+  validateBreaking: $("validate-breaking"),
   footerTail: $("footer-tail"),
   // Filters
   filterbar: $("filterbar"),
@@ -145,15 +162,14 @@ const els = {
   // Clusters
   clusters: $("clusters"),
   clustersList: $("clusters-list"),
-  // Settings drawer
+  // Settings drawer (ae-drawer)
   settingsOverlay: $("settings-overlay"),
   settingsClose: $("settings-close"),
+  executorGroup: $("executor-group"),
   settingsThreads: $("settings-threads"),
   settingsMemberGate: $("settings-member-gate"),
   settingsNoShaPin: $("settings-no-sha-pin"),
   settingsSave: $("settings-save"),
-  // Toast
-  toast: $("toast"),
 };
 
 // --- State -------------------------------------------------------
@@ -175,40 +191,144 @@ const state = {
     threads: 4,
     memberGate: false,
     noShaPinProposals: false,
-    theme: "system",
+    // Aegis theme selection. themeBrand is a BrandId ('default','cinnabar',
+    // 'spectrum',…); themeVariant is a VariantId or null (null = the brand's
+    // default, and for the 'default' brand that means follow the OS scheme).
+    themeBrand: "default",
+    themeVariant: null,
   },
   recents: [], // Array<{ path, lastUsedAt }>
   store: null,
 };
 
 // --- Theme -------------------------------------------------------
+//
+// The UI wears any Aegis v2 brand × variant. The selection lives in
+// prefs.themeBrand (BrandId) + prefs.themeVariant (VariantId | null) and is
+// applied by stamping data-theme/data-variant on <html> via Aegis's applyTheme.
+// Theme changes are LOW-STAKES and persist immediately (like the header
+// toggle) — independent of the Settings "Save" button, which gates the run
+// settings.
 
-function applyTheme(theme) {
-  // theme is one of: 'system' | 'dark' | 'light'.
-  const effective =
-    theme === "system"
-      ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
-      : theme;
-  if (effective === "light") {
-    document.documentElement.setAttribute("data-theme", "light");
-    els.themeIcon.textContent = "☀";
-  } else {
-    document.documentElement.setAttribute("data-theme", "dark");
-    els.themeIcon.textContent = "☾";
-  }
+function currentSelection() {
+  return { theme: state.prefs.themeBrand || "default", variant: state.prefs.themeVariant ?? null };
 }
 
+/** Apply the current prefs selection to <html> and sync the header icon. */
+function applyThemeSelection() {
+  aeApplyTheme(currentSelection());
+  updateThemeIcon();
+}
+
+/** Header ☀/☾ reflects the EFFECTIVE variant's light/dark direction. */
+function updateThemeIcon() {
+  if (!els.themeIcon) return;
+  const sel = currentSelection();
+  const v = getThemeVariant(sel.theme, resolveEffectiveVariant(sel));
+  els.themeIcon.textContent = v && v.isDark ? "☾" : "☀";
+}
+
+/**
+ * Header quick-toggle: flip the current brand between its light and dark
+ * variants. No-op for a brand that ships only one direction (the full picker
+ * in Settings is the way to leave such a brand).
+ */
 function cycleTheme() {
-  // Manual toggle bounces between light <-> dark, leaving "system"
-  // behind. We persist whatever the user lands on.
-  const cur = state.prefs.theme;
-  const next = cur === "light" ? "dark" : "light";
-  state.prefs.theme = next;
-  applyTheme(next);
+  const brand = getThemeBrand(state.prefs.themeBrand || "default");
+  if (!brand) return;
+  const cur = getThemeVariant(brand.id, resolveEffectiveVariant(currentSelection()));
+  const wantDir = cur && cur.direction === "dark" ? "light" : "dark";
+  const target =
+    brand.variants.find((v) => v.direction === wantDir && !v.isHighContrast) ||
+    brand.variants.find((v) => v.direction === wantDir);
+  if (!target) return;
+  state.prefs.themeVariant = target.id;
+  applyThemeSelection();
+  syncThemePicker();
   persistPrefs();
-  // Reflect in the settings panel if it's already populated.
-  const radio = document.querySelector(`input[name="theme"][value="${next}"]`);
-  if (radio) radio.checked = true;
+}
+
+// --- Theme picker (Settings › Appearance) ------------------------
+
+/** Populate the brand <ae-select> + variant chips from THEME_REGISTRY. */
+function buildThemePicker() {
+  if (!els.themeBrand) return;
+  els.themeBrand.innerHTML = THEME_REGISTRY.map(
+    (b) => `<ae-option value="${escapeAttr(b.id)}">${escapeHtml(b.label)}</ae-option>`,
+  ).join("");
+  els.themeBrand.value = state.prefs.themeBrand || "default";
+  renderVariantChips();
+}
+
+/** Reflect the current selection back into the brand select + variant chips. */
+function syncThemePicker() {
+  if (els.themeBrand) els.themeBrand.value = state.prefs.themeBrand || "default";
+  renderVariantChips();
+}
+
+/** Render the variant swatch chips for the currently-selected brand. */
+function renderVariantChips() {
+  if (!els.themeVariants) return;
+  const brand = getThemeBrand(state.prefs.themeBrand || "default");
+  if (!brand) { els.themeVariants.innerHTML = ""; return; }
+  const effective = resolveEffectiveVariant({ theme: brand.id, variant: state.prefs.themeVariant ?? null });
+  const chips = [];
+  // "System" chip for the brand that follows the OS (only the default brand).
+  if (brand.followsSystem) chips.push(systemChipHtml(state.prefs.themeVariant == null));
+  for (const v of brand.variants) {
+    chips.push(variantChipHtml(v, state.prefs.themeVariant != null && v.id === effective));
+  }
+  els.themeVariants.innerHTML = chips.join("");
+  els.themeVariants.querySelectorAll(".theme-swatch").forEach((chip) => {
+    chip.addEventListener("click", () => selectVariant(chip.dataset.variant || null));
+    chip.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectVariant(chip.dataset.variant || null); }
+    });
+  });
+}
+
+function variantChipHtml(v, on) {
+  const s = v.swatch || {};
+  return `
+    <div class="theme-swatch" role="radio" tabindex="0" aria-checked="${on}" data-variant="${escapeAttr(v.id)}" title="${escapeAttr(v.description || v.label)}">
+      <span class="theme-swatch-preview">
+        <span style="background:${escapeAttr(s.bg || "")}"></span>
+        <span style="background:${escapeAttr(s.surface || "")}"></span>
+        <span class="sw-accent" style="background:${escapeAttr(s.accent || "")}"></span>
+      </span>
+      <span class="theme-swatch-label">${escapeHtml(v.label)}</span>
+    </div>`;
+}
+
+function systemChipHtml(on) {
+  return `
+    <div class="theme-swatch" role="radio" tabindex="0" aria-checked="${on}" data-variant="" title="Follow the OS light / dark / contrast preference">
+      <span class="theme-swatch-preview">
+        <span style="background:#ffffff"></span>
+        <span style="background:#0d1117"></span>
+        <span class="sw-accent" style="background:var(--ae-color-accent)"></span>
+      </span>
+      <span class="theme-swatch-label">System</span>
+    </div>`;
+}
+
+/** Brand changed in the select: reset to its default variant (OS-follow for
+ * the default brand), then apply + persist live. */
+function selectBrand(brandId) {
+  const brand = getThemeBrand(brandId) || getThemeBrand("default");
+  state.prefs.themeBrand = brand.id;
+  state.prefs.themeVariant = brand.followsSystem ? null : brand.defaultVariant;
+  applyThemeSelection();
+  renderVariantChips();
+  persistPrefs();
+}
+
+/** Variant chip clicked. Empty string => null (brand default / OS follow). */
+function selectVariant(variantId) {
+  state.prefs.themeVariant = variantId ? variantId : null;
+  applyThemeSelection();
+  renderVariantChips();
+  persistPrefs();
 }
 
 // --- CLI preview -------------------------------------------------
@@ -317,26 +437,21 @@ async function persistPrefs() {
 }
 
 function applyPrefsToSettingsPanel() {
-  document.querySelectorAll('input[name="executor"]').forEach((r) => {
-    r.checked = r.value === state.prefs.executor;
-  });
-  document.querySelectorAll('input[name="theme"]').forEach((r) => {
-    r.checked = r.value === state.prefs.theme;
-  });
+  if (els.executorGroup) els.executorGroup.value = state.prefs.executor || "docker";
   els.settingsThreads.value = String(state.prefs.threads || 4);
   els.settingsMemberGate.checked = !!state.prefs.memberGate;
   els.settingsNoShaPin.checked = !!state.prefs.noShaPinProposals;
+  // The theme controls are driven live by the picker, not gated by Save.
+  syncThemePicker();
 }
 
 function readPrefsFromSettingsPanel() {
-  const executor = document.querySelector('input[name="executor"]:checked');
-  const theme = document.querySelector('input[name="theme"]:checked');
-  state.prefs.executor = executor ? executor.value : "docker";
-  state.prefs.theme = theme ? theme.value : "system";
+  state.prefs.executor = (els.executorGroup && els.executorGroup.value) || "docker";
   const t = parseInt(els.settingsThreads.value, 10);
   state.prefs.threads = Number.isFinite(t) && t > 0 ? t : 4;
   state.prefs.memberGate = els.settingsMemberGate.checked;
   state.prefs.noShaPinProposals = els.settingsNoShaPin.checked;
+  // Theme is not read here — selectBrand/selectVariant already persisted it.
 }
 
 // --- Start / run ------------------------------------------------
@@ -351,7 +466,25 @@ function buildStartArgsPayload() {
     memberGate: state.prefs.memberGate,
     executor: state.prefs.executor,
     noShaPinProposals: state.prefs.noShaPinProposals,
+    onlyBreaking: false,
   };
+}
+
+function validateBreakingUpgrades() {
+  const base = state.lastArgs || buildStartArgsPayload();
+  const args = {
+    ...base,
+    repo: base.repo || els.repo.value.trim(),
+    ecosystem: base.ecosystem || els.ecosystem.value,
+    mode: "validate",
+    threads: state.prefs.threads || null,
+    failFast: els.failFast.checked,
+    memberGate: state.prefs.memberGate,
+    executor: state.prefs.executor,
+    noShaPinProposals: state.prefs.noShaPinProposals,
+    onlyBreaking: true,
+  };
+  startRun(args);
 }
 
 async function startRun(prebuiltArgs) {
@@ -363,6 +496,9 @@ async function startRun(prebuiltArgs) {
   if (state.runActive) return;
   hideErrorBanner();
   resetRunState();
+  if (args.onlyBreaking) {
+    els.emptyState.querySelector("p").textContent = "Validating breaking-risk upgradesâ€¦ waiting for assay to surface proposals.";
+  }
   setStatus("running", "running");
   state.runActive = true;
   state.lastArgs = args;
@@ -420,7 +556,7 @@ function finalizeRun(exitCode) {
   els.start.disabled = false;
   if (state.lastArgs) els.runAgain.hidden = false;
   if (exitCode === 0 || exitCode == null) {
-    if (els.runStatus.classList.contains("pill-error")) {
+    if (els.runStatus.dataset.kind === "error") {
       // Keep the error pill if a banner showed.
     } else {
       setStatus("done", "done");
@@ -433,6 +569,7 @@ function finalizeRun(exitCode) {
     setStatus(`exit ${exitCode}`, "error");
   }
   renderRecents();
+  updateValidateBreakingButton();
 }
 
 function handleNdjsonLine(line) {
@@ -462,6 +599,7 @@ function onRunStarted(evt) {
   if (state.lastArgs && state.lastArgs.repo) {
     pushRecent(state.lastArgs.repo);
   }
+  const validationAttempted = state.lastArgs?.mode === "validate";
   // Index cohorts.
   const cohortByMember = new Map();
   (evt.cohorts || []).forEach((c) => {
@@ -484,13 +622,17 @@ function onRunStarted(evt) {
       tier: p.tier,
       ecosystem: p.ecosystem,
       cohort: p.cohort || null,
+      explanation: p.explanation || null,
       state: "pending",
       durationMs: null,
       conclusion: null,
+      validationAttempted,
       // 1.6.0+ fields, surfaced when present on proposal_completed.
       failureContext: null,
       stderrTail: null,
       manifestPaths: null,
+      validatedWorkflows: null,
+      ciForgeRunIds: null,
       notes: null,
       expanded: false,
     });
@@ -517,6 +659,7 @@ function onRunStarted(evt) {
   // Filterbar visible once we have proposals to filter.
   els.filterbar.hidden = state.proposals.size === 0;
   els.footerTail.textContent = `${state.proposals.size} proposal(s), ${state.cohorts.size} cohort(s)`;
+  updateValidateBreakingButton();
 }
 
 function onProposalValidating(evt) {
@@ -538,6 +681,8 @@ function onProposalCompleted(evt) {
   if (evt.failure_context) p.failureContext = evt.failure_context;
   if (evt.stderr_tail) p.stderrTail = evt.stderr_tail;
   if (evt.manifest_paths) p.manifestPaths = evt.manifest_paths;
+  if (evt.validated_workflows) p.validatedWorkflows = evt.validated_workflows;
+  if (evt.ci_forge_run_ids) p.ciForgeRunIds = evt.ci_forge_run_ids;
   if (evt.notes) p.notes = evt.notes;
   updateProposalRow(p);
   if (p.el && p.el.classList.contains("expanded")) {
@@ -606,7 +751,15 @@ function onRunCompleted(evt) {
   if (Array.isArray(evt.failure_clusters) && evt.failure_clusters.length > 0) {
     renderClusters(evt.failure_clusters);
   }
+  for (const p of state.proposals.values()) {
+    if (p.state === "pending") {
+      p.state = "unvalidated";
+      p.conclusion = "unvalidated";
+      updateProposalRow(p);
+    }
+  }
   setStatus("done", "done");
+  updateValidateBreakingButton();
 }
 
 // --- Rendering ---------------------------------------------------
@@ -649,6 +802,7 @@ function renderProposalRow(p) {
         <span class="arrow">→</span>
         <span class="to"></span>
       </span>
+      <span class="proposal-reason"></span>
     </span>
     <span class="proposal-tier"></span>
     <span class="proposal-duration"></span>
@@ -658,6 +812,7 @@ function renderProposalRow(p) {
   li.querySelector(".proposal-subject").textContent = p.subject;
   li.querySelector(".from").textContent = p.from;
   li.querySelector(".to").textContent = p.to;
+  updateProposalReason(p, li);
   const tier = li.querySelector(".proposal-tier");
   tier.textContent = p.tier;
   tier.classList.add(`tier-${p.tier}`);
@@ -680,6 +835,99 @@ function toggleExpanded(p) {
   }
 }
 
+function proposalExplanation(p) {
+  return p.explanation || inferGithubActionsExplanation(p);
+}
+
+function proposalReasonText(p) {
+  if (p.failureContext?.summary) {
+    const rule = p.failureContext.rule ? ` (${p.failureContext.rule})` : "";
+    return `Validation failed: ${p.failureContext.summary}${rule}`;
+  }
+  if (p.stderrTail && p.state === "failure") {
+    const firstLine = String(p.stderrTail).split(/\r?\n/).find((line) => line.trim());
+    if (firstLine) return `Validation failed: ${firstLine.trim()}`;
+  }
+  if (p.state === "success") {
+    return "Validated: no regression observed under repo gates.";
+  }
+  if (p.state === "unvalidated" && p.validationAttempted) {
+    const note = firstNote(p);
+    return note
+      ? `Validation unavailable: ${note}`
+      : "Validation unavailable: no repo gate ran for this proposal.";
+  }
+  const exp = proposalExplanation(p);
+  if (exp?.summary) return `Risk: ${exp.summary}`;
+  return "";
+}
+
+function validationStatusText(p) {
+  switch (p.state) {
+    case "success": return "validated pass";
+    case "failure": return "validated failure";
+    case "inprogress": return "validation running";
+    case "unvalidated": return "validation unavailable";
+    default: return p.validationAttempted ? "validation requested" : "not validated";
+  }
+}
+
+function firstNote(p) {
+  if (!p.notes) return "";
+  if (Array.isArray(p.notes)) {
+    return String(p.notes.find((note) => String(note).trim()) || "").trim();
+  }
+  return String(p.notes).trim();
+}
+
+function updateProposalReason(p, row = p.el) {
+  if (!row) return;
+  const reason = row.querySelector(".proposal-reason");
+  if (!reason) return;
+  const text = proposalReasonText(p);
+  reason.textContent = text;
+  reason.title = text;
+  reason.hidden = !text;
+}
+
+function inferGithubActionsExplanation(p) {
+  if ((p.ecosystem || "").toLowerCase() !== "github-actions") return null;
+  if ((p.tier || "").toLowerCase() !== "breaking") return null;
+
+  const fromMajor = majorFromActionRef(p.from);
+  const toMajor = majorFromActionRef(p.to);
+  if (fromMajor && toMajor && fromMajor !== toMajor) {
+    return {
+      summary: `gha: major version changed (${fromMajor} -> ${toMajor}); breaking-by-spec`,
+      rule: "gha:major-bump",
+      inputs: {
+        from_major: fromMajor,
+        from_ref: p.from || "",
+        to_major: toMajor,
+        to_ref: p.to || "",
+      },
+      decision: "breaking",
+      fallback: true,
+    };
+  }
+
+  return {
+    summary: "Classifier metadata was not recorded with this run; rerun analysis with the current assay binary for rule-level evidence.",
+    rule: "classifier:metadata-missing",
+    inputs: {
+      from_ref: p.from || "",
+      to_ref: p.to || "",
+    },
+    decision: p.tier || "breaking",
+    fallback: true,
+  };
+}
+
+function majorFromActionRef(ref) {
+  const m = String(ref || "").trim().match(/^v?(\d+)(?:[.\-_]|$)/i);
+  return m ? m[1] : null;
+}
+
 function renderDetailPanel(p) {
   const panel = p.el.querySelector(".proposal-detail");
   if (!panel) return;
@@ -698,14 +946,45 @@ function renderDetailPanel(p) {
   if (p.conclusion) {
     lines.push(`<dt>conclusion</dt><dd>${escapeHtml(p.conclusion)}</dd>`);
   }
+  if (p.validationAttempted) {
+    lines.push(`<dt>validation</dt><dd>${escapeHtml(validationStatusText(p))}</dd>`);
+  }
   if (Array.isArray(p.manifestPaths) && p.manifestPaths.length) {
     lines.push(`<dt>manifests</dt><dd>${p.manifestPaths.map(escapeHtml).join("<br>")}</dd>`);
+  }
+  if (Array.isArray(p.validatedWorkflows) && p.validatedWorkflows.length) {
+    lines.push(`<dt>validated workflows</dt><dd>${p.validatedWorkflows.map(escapeHtml).join("<br>")}</dd>`);
+  }
+  if (Array.isArray(p.ciForgeRunIds) && p.ciForgeRunIds.length) {
+    lines.push(`<dt>ci-forge runs</dt><dd>${p.ciForgeRunIds.map(escapeHtml).join("<br>")}</dd>`);
   }
   if (p.notes) {
     const notes = Array.isArray(p.notes) ? p.notes : [p.notes];
     lines.push(`<dt>notes</dt><dd>${notes.map(escapeHtml).join("<br>")}</dd>`);
   }
   lines.push("</dl>");
+
+  const exp = proposalExplanation(p);
+  if (exp) {
+    const fallbackClass = exp.fallback ? " classifier-fallback" : "";
+    lines.push(`<div class="detail-section classifier-section${fallbackClass}">`);
+    lines.push("<h4>Classification</h4>");
+    lines.push(`<div class="findings-summary classifier-summary">${escapeHtml(exp.summary || "")} <span class="rule">${escapeHtml(exp.rule || "")}</span></div>`);
+    if (exp.inputs && typeof exp.inputs === "object") {
+      const entries = Object.entries(exp.inputs).sort(([a], [b]) => a.localeCompare(b));
+      if (entries.length) {
+        lines.push('<dl class="detail-grid classifier-inputs">');
+        for (const [key, value] of entries) {
+          lines.push(`<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`);
+        }
+        lines.push("</dl>");
+      }
+    }
+    if (exp.decision) {
+      lines.push(`<p class="classifier-decision">decision: ${escapeHtml(exp.decision)}</p>`);
+    }
+    lines.push("</div>");
+  }
 
   // failure_context structured findings (1.6.0+). When absent,
   // we fall through to the raw stderr_tail render.
@@ -824,6 +1103,7 @@ function updateProposalRow(p) {
   p.el.className = `proposal state-${p.state}${wasExpanded ? " expanded" : ""}`;
   const dur = p.el.querySelector(".proposal-duration");
   if (dur) dur.textContent = p.durationMs != null ? formatDuration(p.durationMs) : "";
+  updateProposalReason(p);
   applyFiltersToRow(p);
 }
 
@@ -847,6 +1127,16 @@ function updateCounts() {
   els.countValidating.textContent = `${validating} validating`;
   els.countPassed.textContent = `${passed} passed`;
   els.countFailed.textContent = `${failed} failed`;
+  updateValidateBreakingButton();
+}
+
+function updateValidateBreakingButton() {
+  if (!els.validateBreaking) return;
+  const hasBreaking = Array.from(state.proposals.values()).some(
+    (p) => p.tier === "breaking" && (p.state === "pending" || p.state === "unvalidated")
+  );
+  const isBreakingValidation = state.lastArgs?.onlyBreaking && state.lastArgs?.mode === "validate";
+  els.validateBreaking.hidden = state.runActive || !hasBreaking || isBreakingValidation;
 }
 
 // --- Clusters ---------------------------------------------------
@@ -887,10 +1177,8 @@ function renderClusters(clusters) {
 // --- Filters + search ------------------------------------------
 
 function setFilter(f) {
+  // ae-segmented owns its own active-cell styling; we only track + filter.
   state.filter = f;
-  document.querySelectorAll(".chip").forEach((c) => {
-    c.classList.toggle("chip-active", c.dataset.filter === f);
-  });
   applyFilters();
 }
 
@@ -947,9 +1235,12 @@ function formatDuration(ms) {
   return `${m}m ${rem}s`;
 }
 
+const STATUS_TONE = { idle: "neutral", running: "accent", done: "success", error: "danger" };
 function setStatus(label, kind) {
   els.runStatus.textContent = label;
-  els.runStatus.className = `run-status pill pill-${kind || "idle"}`;
+  els.runStatus.dataset.kind = kind || "idle";
+  // run-status is an <ae-tag>; tone drives its color.
+  els.runStatus.setAttribute("tone", STATUS_TONE[kind] || "neutral");
 }
 
 function resetRunState() {
@@ -980,10 +1271,8 @@ function hideErrorBanner() {
 }
 
 function toast(message) {
-  els.toast.textContent = message;
-  els.toast.hidden = false;
-  clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => { els.toast.hidden = true; }, 1800);
+  // Aegis toast() self-portals into document.body and auto-dismisses.
+  aeToast({ message, duration: 1800 });
 }
 
 function escapeHtml(s) {
@@ -1002,9 +1291,11 @@ function escapeAttr(s) {
 
 // --- Wireup -----------------------------------------------------
 
+// ae-input fires `ae-input`/`ae-change`; ae-select + ae-checkbox fire
+// `ae-change`. Listen for both so the CLI preview stays live.
 [els.repo, els.ecosystem, els.mode, els.failFast].forEach((el) => {
-  el.addEventListener("input", updateCliPreview);
-  el.addEventListener("change", updateCliPreview);
+  el.addEventListener("ae-input", updateCliPreview);
+  el.addEventListener("ae-change", updateCliPreview);
 });
 
 els.browse.addEventListener("click", async () => {
@@ -1027,17 +1318,26 @@ els.runAgain.addEventListener("click", () => {
   if (state.lastArgs) startRun(state.lastArgs);
 });
 
-// Filter chips.
-document.querySelectorAll(".chip").forEach((chip) => {
-  chip.addEventListener("click", () => setFilter(chip.dataset.filter));
-});
+els.validateBreaking.addEventListener("click", validateBreakingUpgrades);
 
-els.search.addEventListener("input", () => {
-  state.search = els.search.value.trim().toLowerCase();
+// Status filter (ae-segmented — single-select radiogroup).
+const statusFilter = $("status-filter");
+if (statusFilter) {
+  statusFilter.addEventListener("ae-change", (e) => {
+    setFilter(e.detail?.value ?? statusFilter.value ?? "all");
+  });
+}
+
+els.search.addEventListener("ae-input", (e) => {
+  state.search = String(e.detail?.value ?? els.search.value ?? "").trim().toLowerCase();
+  applyFilters();
+});
+els.search.addEventListener("ae-clear", () => {
+  state.search = "";
   applyFilters();
 });
 
-// Error banner copy + dismiss.
+// Error banner copy + dismiss (our own non-destructive dismiss — see index.html).
 els.errorBannerCopy.addEventListener("click", async () => {
   const ok = await clipboardWrite(els.errorBannerBody.textContent || "");
   toast(ok ? "Copied to clipboard" : "Copy failed");
@@ -1051,28 +1351,30 @@ els.recentsClear.addEventListener("click", async () => {
   renderRecents();
 });
 
-// Theme toggle (header icon).
+// Theme: header quick-toggle (light↔dark) + live brand picker.
 els.themeToggle.addEventListener("click", cycleTheme);
-// React to OS preference changes when in "system" mode.
-window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
-  if (state.prefs.theme === "system") applyTheme("system");
+els.themeBrand.addEventListener("ae-change", (e) => {
+  selectBrand(e.detail?.value ?? els.themeBrand.value ?? "default");
+});
+// Keep the header icon honest when the OS scheme flips under "System".
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (state.prefs.themeBrand === "default" && state.prefs.themeVariant == null) {
+    updateThemeIcon();
+  }
 });
 
-// Settings drawer.
+// Settings drawer (ae-drawer is controlled via the `open` property; it closes
+// itself on backdrop/escape and fires ae-close).
 function openSettings() {
   applyPrefsToSettingsPanel();
-  els.settingsOverlay.hidden = false;
+  els.settingsOverlay.open = true;
 }
-function closeSettings() { els.settingsOverlay.hidden = true; }
+function closeSettings() { els.settingsOverlay.open = false; }
 els.settingsBtn.addEventListener("click", openSettings);
 els.openSettingsInline.addEventListener("click", openSettings);
 els.settingsClose.addEventListener("click", closeSettings);
-els.settingsOverlay.addEventListener("click", (e) => {
-  if (e.target === els.settingsOverlay) closeSettings();
-});
 els.settingsSave.addEventListener("click", async () => {
   readPrefsFromSettingsPanel();
-  applyTheme(state.prefs.theme);
   await persistPrefs();
   updateCliPreview();
   closeSettings();
@@ -1087,6 +1389,14 @@ window.addEventListener("DOMContentLoaded", async () => {
     const savedPrefs = await state.store.get(STORE_KEY_PREFS);
     if (savedPrefs && typeof savedPrefs === "object") {
       Object.assign(state.prefs, savedPrefs);
+      // Pre-Aegis builds stored a single prefs.theme string
+      // ('system'|'dark'|'light'). Map it onto the new brand/variant axes
+      // (all under the default brand) so an upgrading user keeps their choice.
+      if (typeof savedPrefs.theme === "string" && !savedPrefs.themeBrand) {
+        state.prefs.themeBrand = "default";
+        state.prefs.themeVariant = savedPrefs.theme === "system" ? null : savedPrefs.theme;
+      }
+      delete state.prefs.theme;
     }
     const savedRecents = await state.store.get(STORE_KEY_RECENTS);
     if (Array.isArray(savedRecents)) {
@@ -1095,7 +1405,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   } catch (err) {
     console.warn("store init failed:", err);
   }
-  applyTheme(state.prefs.theme || "system");
+  buildThemePicker();
+  applyThemeSelection();
   applyPrefsToSettingsPanel();
   renderRecents();
   updateCliPreview();
