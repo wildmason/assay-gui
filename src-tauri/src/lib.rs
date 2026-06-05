@@ -73,6 +73,10 @@ pub struct StartArgs {
     /// GitHub Actions references. Maps to `--no-sha-pin-proposals`.
     #[serde(default)]
     pub no_sha_pin_proposals: bool,
+    /// Keep only proposals classified as breaking-risk. Used by the
+    /// GUI's "Validate breaking upgrades" second-phase workflow.
+    #[serde(default)]
+    pub only_breaking: bool,
 }
 
 fn default_executor() -> String {
@@ -289,6 +293,9 @@ fn build_cli_args(args: &StartArgs) -> Vec<String> {
     if args.no_sha_pin_proposals {
         out.push("--no-sha-pin-proposals".into());
     }
+    if args.only_breaking {
+        out.push("--only-breaking".into());
+    }
     out
 }
 
@@ -360,6 +367,7 @@ mod tests {
             member_gate: false,
             executor: "docker".into(),
             no_sha_pin_proposals: false,
+            only_breaking: false,
         }
     }
 
@@ -432,6 +440,14 @@ mod tests {
         let mut args = base_args();
         args.no_sha_pin_proposals = true;
         assert!(build_cli_args(&args).contains(&"--no-sha-pin-proposals".to_string()));
+    }
+
+    #[test]
+    fn build_cli_args_only_breaking_flag() {
+        let mut args = base_args();
+        args.mode = "validate".into();
+        args.only_breaking = true;
+        assert!(build_cli_args(&args).contains(&"--only-breaking".to_string()));
     }
 
     #[test]
